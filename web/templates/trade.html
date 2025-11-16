@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trade - Penny Trading System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .search-results {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+            background: white;
+        }
+        .stock-card {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .stock-card:hover {
+            background-color: #f8f9fa;
+        }
+        .price-up {
+            color: #28a745;
+        }
+        .price-down {
+            color: #dc3545;
+        }
+        .trade-panel {
+            position: sticky;
+            top: 20px;
+        }
+        .watchlist-item {
+            padding: 10px;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .watchlist-item:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-graph-up-arrow"></i> Penny Trading System
+            </a>
+            <div class="navbar-nav flex-row">
+                <a class="nav-link me-3" href="/">Dashboard</a>
+                <a class="nav-link me-3 active" href="/trade">Trade</a>
+                <a class="nav-link me-3" href="/scanner">Scanner</a>
+                <a class="nav-link me-3" href="/positions">Positions</a>
+                <a class="nav-link me-3" href="/approvals">Approvals</a>
+                <a class="nav-link" href="/analytics">Analytics</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <!-- Left Column: Search and Watchlist -->
+            <div class="col-md-4">
+                <!-- Stock Search -->
+                <div class="card mb-4">
+                    <div class="card-header bg-primary text-white">
+                        <h5><i class="bi bi-search"></i> Search Stocks</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="input-group mb-3">
+                            <input type="text" class="form-control" id="stock-search" 
+                                   placeholder="Enter symbol (e.g., AAPL, TSLA)" 
+                                   onkeypress="if(event.key === 'Enter') searchStock()">
+                            <button class="btn btn-primary" onclick="searchStock()">
+                                <i class="bi bi-search"></i> Search
+                            </button>
+                        </div>
+                        <div id="search-results" class="search-results" style="display: none;"></div>
+                        <div id="stock-details" style="display: none;"></div>
+                    </div>
+                </div>
+
+                <!-- Watchlist -->
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h5><i class="bi bi-list-check"></i> Watchlist</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="watchlist-items" style="max-height: 500px; overflow-y: auto;">
+                            <div class="text-center p-3 text-muted">Loading watchlist...</div>
+                        </div>
+                        <div class="card-footer">
+                            <button class="btn btn-sm btn-success" onclick="addToWatchlist()">
+                                <i class="bi bi-plus-circle"></i> Add Symbol
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Trading Panel -->
+            <div class="col-md-8">
+                <div class="card trade-panel">
+                    <div class="card-header bg-success text-white">
+                        <h5><i class="bi bi-cart"></i> Execute Trade</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="selected-stock" class="alert alert-info" style="display: none;">
+                            <strong>Selected:</strong> <span id="selected-symbol">-</span>
+                            <span class="float-end">
+                                <span id="selected-price" class="fw-bold">$0.00</span>
+                                <span id="selected-change"></span>
+                            </span>
+                        </div>
+
+                        <form id="trade-form">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Symbol</label>
+                                    <input type="text" class="form-control" id="trade-symbol" 
+                                           placeholder="Enter symbol" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Side</label>
+                                    <select class="form-select" id="trade-side" required>
+                                        <option value="buy">Buy</option>
+                                        <option value="sell">Sell</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Quantity</label>
+                                    <input type="number" class="form-control" id="trade-qty" 
+                                           placeholder="Enter quantity" min="1" step="1" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Order Type</label>
+                                    <select class="form-select" id="trade-order-type">
+                                        <option value="market">Market</option>
+                                        <option value="limit">Limit</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="row mb-3" id="limit-price-row" style="display: none;">
+                                <div class="col-md-6">
+                                    <label class="form-label">Limit Price</label>
+                                    <input type="number" class="form-control" id="trade-limit-price" 
+                                           placeholder="Enter limit price" step="0.0001">
+                                </div>
+                            </div>
+
+                            <div class="row mb-3">
+                                <div class="col-md-12">
+                                    <div class="card bg-light">
+                                        <div class="card-body">
+                                            <h6>Trade Summary</h6>
+                                            <div class="row">
+                                                <div class="col-6">
+                                                    <small class="text-muted">Estimated Cost:</small>
+                                                    <div id="estimated-cost" class="fw-bold">$0.00</div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <small class="text-muted">Buying Power:</small>
+                                                    <div id="buying-power-display" class="fw-bold">$0.00</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="d-grid gap-2">
+                                <button type="button" class="btn btn-success btn-lg" onclick="executeTrade()">
+                                    <i class="bi bi-check-circle"></i> Execute Trade
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="clearTradeForm()">
+                                    <i class="bi bi-x-circle"></i> Clear
+                                </button>
+                            </div>
+                        </form>
+
+                        <div id="trade-result" class="mt-3" style="display: none;"></div>
+                    </div>
+                </div>
+
+                <!-- Recent Trades -->
+                <div class="card mt-4">
+                    <div class="card-header">
+                        <h5><i class="bi bi-clock-history"></i> Recent Trades</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Symbol</th>
+                                        <th>Side</th>
+                                        <th>Qty</th>
+                                        <th>Price</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="recent-trades">
+                                    <tr>
+                                        <td colspan="6" class="text-center text-muted">No recent trades</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add to Watchlist Modal -->
+    <div class="modal fade" id="addWatchlistModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Add to Watchlist</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="text" class="form-control" id="watchlist-symbol-input" 
+                           placeholder="Enter stock symbol">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="confirmAddToWatchlist()">Add</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/trade.js') }}"></script>
+</body>
+</html>
+

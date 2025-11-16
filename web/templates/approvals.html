@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trade Approvals - Penny Trading System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .trade-card {
+            border-left: 4px solid #007bff;
+            margin-bottom: 20px;
+            transition: box-shadow 0.3s;
+        }
+        .trade-card:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .trade-card.upper-band {
+            border-left-color: #dc3545;
+        }
+        .trade-card.middle-band {
+            border-left-color: #ffc107;
+        }
+        .trade-card.lower-band {
+            border-left-color: #28a745;
+        }
+        .metric-badge {
+            font-size: 0.9rem;
+            padding: 0.5rem 0.75rem;
+        }
+        .exit-route {
+            padding: 0.5rem;
+            margin: 0.25rem 0;
+            border-radius: 0.25rem;
+            background-color: #f8f9fa;
+        }
+        .exit-route.profit {
+            background-color: #d4edda;
+        }
+        .exit-route.loss {
+            background-color: #f8d7da;
+        }
+        .pending-badge {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-graph-up-arrow"></i> Penny Trading System
+            </a>
+            <div class="navbar-nav flex-row">
+                <a class="nav-link me-3" href="/">Dashboard</a>
+                <a class="nav-link me-3" href="/trade">Trade</a>
+                <a class="nav-link me-3" href="/scanner">Scanner</a>
+                <a class="nav-link me-3" href="/positions">Positions</a>
+                <a class="nav-link me-3 active" href="/approvals">Approvals</a>
+                <a class="nav-link" href="/analytics">Analytics</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <h1><i class="bi bi-check-circle"></i> Trade Approvals</h1>
+                <p class="text-muted">Review and approve pending trades before execution</p>
+            </div>
+        </div>
+
+        <div class="row mb-3">
+            <div class="col-md-12">
+                <div class="alert alert-info d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="bi bi-info-circle"></i> 
+                        <strong>Note:</strong> All trades are now queued for your approval. 
+                        Review the analysis below before approving or rejecting each trade.
+                    </div>
+                    <div>
+                        <span id="system-status" class="badge bg-secondary me-2">Status: Unknown</span>
+                        <button id="start-system-btn" class="btn btn-success btn-sm" onclick="startSystem()">
+                            <i class="bi bi-play-circle"></i> Start System
+                        </button>
+                        <button id="stop-system-btn" class="btn btn-danger btn-sm" onclick="stopSystem()" style="display: none;">
+                            <i class="bi bi-stop-circle"></i> Stop System
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="pending-trades-container">
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-3">Loading pending trades...</p>
+            </div>
+        </div>
+
+        <div id="no-trades" style="display: none;" class="text-center py-5">
+            <i class="bi bi-inbox" style="font-size: 4rem; color: #6c757d;"></i>
+            <h3 class="mt-3">No Pending Trades</h3>
+            <p class="text-muted">All trades have been processed or there are no new trading signals.</p>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/approvals.js') }}"></script>
+</body>
+</html>
+

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Scanner - Penny Trading System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">Penny Trading System</a>
+            <div class="navbar-nav flex-row">
+                <a class="nav-link me-3" href="/">Dashboard</a>
+                <a class="nav-link me-3" href="/trade">Trade</a>
+                <a class="nav-link me-3" href="/scanner">Scanner</a>
+                <a class="nav-link me-3" href="/positions">Positions</a>
+                <a class="nav-link me-3" href="/approvals">Approvals</a>
+                <a class="nav-link" href="/analytics">Analytics</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <h1>Stock Scanner</h1>
+                <p class="text-muted">Find high-volume, high-volatility penny stocks for scalping</p>
+            </div>
+        </div>
+
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <button class="btn btn-primary" onclick="runScanner()">Run Scanner</button>
+                <button class="btn btn-secondary" onclick="refreshResults()">Refresh</button>
+                <span class="ms-3" id="scan-status"></span>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Scanner Results</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover" id="scanner-table">
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th>Price</th>
+                                        <th>Volume Ratio</th>
+                                        <th>Volatility</th>
+                                        <th>Momentum</th>
+                                        <th>Scalping Score</th>
+                                        <th>Price Change %</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="scanner-tbody">
+                                    <tr>
+                                        <td colspan="8" class="text-center">Click "Run Scanner" to find opportunities</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function runScanner() {
+            document.getElementById('scan-status').innerHTML = '<span class="text-info">Scanning...</span>';
+            fetch('/api/scanner/run')
+                .then(response => response.json())
+                .then(data => {
+                    displayResults(data);
+                    document.getElementById('scan-status').innerHTML = '<span class="text-success">Scan complete</span>';
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('scan-status').innerHTML = '<span class="text-danger">Error scanning</span>';
+                });
+        }
+
+        function displayResults(results) {
+            const tbody = document.getElementById('scanner-tbody');
+            if (!results || results.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center">No opportunities found</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = results.map(opp => `
+                <tr>
+                    <td><strong>${opp.symbol}</strong></td>
+                    <td>$${opp.current_price.toFixed(4)}</td>
+                    <td>${opp.volume_ratio.toFixed(2)}x</td>
+                    <td>${opp.volatility_score.toFixed(2)}%</td>
+                    <td>${opp.momentum_score.toFixed(2)}</td>
+                    <td><strong>${opp.scalping_score.toFixed(2)}</strong></td>
+                    <td class="${opp.price_change_pct >= 0 ? 'text-success' : 'text-danger'}">
+                        ${opp.price_change_pct >= 0 ? '+' : ''}${opp.price_change_pct.toFixed(2)}%
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-primary" onclick="viewDetails('${opp.symbol}')">View</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function viewDetails(symbol) {
+            alert(`View details for ${symbol} - Feature coming soon!`);
+        }
+
+        function refreshResults() {
+            runScanner();
+        }
+
+        // Auto-refresh every 60 seconds
+        setInterval(refreshResults, 60000);
+    </script>
+</body>
+</html>
+

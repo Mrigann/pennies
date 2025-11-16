@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Positions - Penny Trading System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">Penny Trading System</a>
+            <div class="navbar-nav flex-row">
+                <a class="nav-link me-3" href="/">Dashboard</a>
+                <a class="nav-link me-3" href="/trade">Trade</a>
+                <a class="nav-link me-3" href="/scanner">Scanner</a>
+                <a class="nav-link me-3" href="/positions">Positions</a>
+                <a class="nav-link me-3" href="/approvals">Approvals</a>
+                <a class="nav-link" href="/analytics">Analytics</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <h1>Active Positions</h1>
+                <button class="btn btn-primary" onclick="refreshPositions()">Refresh</button>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Current Positions</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th>Quantity</th>
+                                        <th>Entry Price</th>
+                                        <th>Current Price</th>
+                                        <th>Stop Loss</th>
+                                        <th>Profit Target</th>
+                                        <th>Unrealized P&L</th>
+                                        <th>P&L %</th>
+                                        <th>Entry Time</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="positions-tbody">
+                                    <tr>
+                                        <td colspan="10" class="text-center">Loading positions...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function refreshPositions() {
+            fetch('/api/positions')
+                .then(response => response.json())
+                .then(positions => {
+                    displayPositions(positions);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('positions-tbody').innerHTML = 
+                        '<tr><td colspan="10" class="text-center text-danger">Error loading positions</td></tr>';
+                });
+        }
+
+        function displayPositions(positions) {
+            const tbody = document.getElementById('positions-tbody');
+            
+            if (!positions || positions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" class="text-center">No active positions</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = positions.map(pos => {
+                const pnl = pos.unrealized_pl || 0;
+                const pnlPercent = pos.unrealized_plpc || 0;
+                const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
+                
+                return `
+                    <tr>
+                        <td><strong>${pos.symbol}</strong></td>
+                        <td>${pos.qty}</td>
+                        <td>$${pos.avg_entry_price.toFixed(4)}</td>
+                        <td>$${pos.current_price.toFixed(4)}</td>
+                        <td>$${(pos.stop_loss || 0).toFixed(4)}</td>
+                        <td>$${(pos.profit_target || 0).toFixed(4)}</td>
+                        <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
+                        <td class="${pnlClass}">${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%</td>
+                        <td>${pos.entry_time || 'N/A'}</td>
+                        <td>
+                            <button class="btn btn-sm btn-danger" onclick="exitPosition('${pos.symbol}', ${pos.qty})">Exit</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function exitPosition(symbol, qty) {
+            if (confirm(`Exit position in ${symbol}?`)) {
+                fetch('/api/trade', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        symbol: symbol,
+                        side: 'sell',
+                        qty: Math.abs(qty)
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert('Error: ' + data.error);
+                    } else {
+                        alert('Order placed successfully');
+                        refreshPositions();
+                    }
+                })
+                .catch(error => {
+                    alert('Error: ' + error);
+                });
+            }
+        }
+
+        // Auto-refresh every 5 seconds
+        refreshPositions();
+        setInterval(refreshPositions, 5000);
+    </script>
+</body>
+</html>
+
