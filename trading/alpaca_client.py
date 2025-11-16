@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from alpaca.trading.client import TradingClient
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.requests import StockBarsRequest, StockLatestTradeRequest, StockLatestQuoteRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, GetOrdersRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderType
@@ -423,4 +423,115 @@ class AlpacaClient:
         """
         bars = self.get_bars(symbol, timeframe="1Min", limit=1)
         return bars[0] if bars else None
+    
+    def get_latest_trade(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Get the latest trade for a symbol.
+        
+        Args:
+            symbol: Stock symbol
+        
+        Returns:
+            Latest trade dictionary or None
+        """
+        try:
+            request = StockLatestTradeRequest(symbol_or_symbols=[symbol])
+            trades = self.data_client.get_stock_latest_trade(request)
+            
+            if symbol in trades and trades[symbol]:
+                trade = trades[symbol]
+                return {
+                    "price": float(trade.price),
+                    "size": int(trade.size),
+                    "timestamp": trade.timestamp.isoformat() if trade.timestamp else None
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting latest trade for {symbol}: {e}")
+            return None
+    
+    def get_latest_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Get the latest quote for a symbol.
+        
+        Args:
+            symbol: Stock symbol
+        
+        Returns:
+            Latest quote dictionary or None
+        """
+        try:
+            request = StockLatestQuoteRequest(symbol_or_symbols=[symbol])
+            quotes = self.data_client.get_stock_latest_quote(request)
+            
+            if symbol in quotes and quotes[symbol]:
+                quote = quotes[symbol]
+                return {
+                    "bid_price": float(quote.bid_price) if quote.bid_price else None,
+                    "ask_price": float(quote.ask_price) if quote.ask_price else None,
+                    "bid_size": int(quote.bid_size) if quote.bid_size else None,
+                    "ask_size": int(quote.ask_size) if quote.ask_size else None,
+                    "timestamp": quote.timestamp.isoformat() if quote.timestamp else None
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting latest quote for {symbol}: {e}")
+            return None
+    
+    def get_stock_quote_info(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Get stock quote information using multiple methods as fallback.
+        Tries: latest bar -> latest trade -> latest quote
+        
+        Args:
+            symbol: Stock symbol
+        
+        Returns:
+            Dictionary with price information or None
+        """
+        # Try to get latest bar first (most complete data)
+        latest_bar = self.get_latest_bar(symbol)
+        if latest_bar:
+            return {
+                "price": latest_bar.get('close'),
+                "high": latest_bar.get('high'),
+                "low": latest_bar.get('low'),
+                "open": latest_bar.get('open'),
+                "volume": latest_bar.get('volume'),
+                "timestamp": latest_bar.get('timestamp'),
+                "source": "bar"
+            }
+        
+        # Fallback to latest trade
+        latest_trade = self.get_latest_trade(symbol)
+        if latest_trade:
+            price = latest_trade.get('price')
+            return {
+                "price": price,
+                "high": price,
+                "low": price,
+                "open": price,
+                "volume": latest_trade.get('size', 0),
+                "timestamp": latest_trade.get('timestamp'),
+                "source": "trade"
+            }
+        
+        # Fallback to latest quote
+        latest_quote = self.get_latest_quote(symbol)
+        if latest_quote:
+            bid = latest_quote.get('bid_price')
+            ask = latest_quote.get('ask_price')
+            mid_price = (bid + ask) / 2 if bid and ask else (bid or ask)
+            if mid_price:
+                return {
+                    "price": mid_price,
+                    "high": mid_price,
+                    "low": mid_price,
+                    "open": mid_price,
+                    "volume": 0,
+                    "timestamp": latest_quote.get('timestamp'),
+                    "source": "quote"
+                }
+        
+        return None
 

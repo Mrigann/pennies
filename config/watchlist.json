@@ -1,7 +1,8 @@
 {
   "symbols": [
-    "AAPL"
+    "AAPL",
+    "BAC"
   ],
-  "last_updated": "2025-11-16T12:51:34.012538",
+  "last_updated": "2025-11-16T13:15:10.493508",
   "notes": "Add stock symbols to track for daily trading"
 }

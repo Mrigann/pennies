@@ -206,14 +206,93 @@ def get_risk_summary():
 
 @app.route('/api/scanner/run')
 def run_scanner():
-    """Run stock scanner."""
+    """Run stock scanner with detailed results."""
     try:
         system = get_trading_system()
-        opportunities = system['scanner'].get_top_scalping_opportunities(limit=20)
-        return jsonify(opportunities)
+        scanner = system['scanner']
+        
+        # Get watchlist
+        from utils.data_loader import load_watchlist
+        watchlist = load_watchlist()
+        
+        if not watchlist:
+            return jsonify({
+                "error": "Watchlist is empty. Please add stocks to the watchlist first.",
+                "opportunities": [],
+                "scanned": [],
+                "stats": {
+                    "total_scanned": 0,
+                    "opportunities_found": 0,
+                    "filtered_out": 0,
+                    "errors": 0
+                }
+            })
+        
+        # Scan all stocks in watchlist with detailed tracking
+        all_scanned = []
+        opportunities = []
+        errors = []
+        
+        for symbol in watchlist:
+            try:
+                opp = scanner._analyze_stock(symbol)
+                if opp:
+                    all_scanned.append({
+                        "symbol": symbol,
+                        "status": "opportunity",
+                        "scalping_score": opp.get('scalping_score', 0),
+                        "current_price": opp.get('current_price', 0),
+                        "volume_ratio": opp.get('volume_ratio', 0),
+                        "volatility_score": opp.get('volatility_score', 0)
+                    })
+                    opportunities.append(opp)
+                else:
+                    all_scanned.append({
+                        "symbol": symbol,
+                        "status": "filtered",
+                        "reason": "Did not meet criteria"
+                    })
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"Error scanning {symbol}: {error_msg}")
+                errors.append({"symbol": symbol, "error": error_msg})
+                all_scanned.append({
+                    "symbol": symbol,
+                    "status": "error",
+                    "error": error_msg
+                })
+        
+        # Sort opportunities by scalping score
+        opportunities.sort(key=lambda x: x.get('scalping_score', 0), reverse=True)
+        opportunities = opportunities[:20]  # Limit to top 20
+        
+        stats = {
+            "total_scanned": len(watchlist),
+            "opportunities_found": len(opportunities),
+            "filtered_out": len([s for s in all_scanned if s.get('status') == 'filtered']),
+            "errors": len(errors),
+            "watchlist_size": len(watchlist)
+        }
+        
+        return jsonify({
+            "opportunities": opportunities,
+            "scanned": all_scanned,
+            "stats": stats,
+            "errors": errors
+        })
     except Exception as e:
-        logger.error(f"Error running scanner: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error running scanner: {e}", exc_info=True)
+        return jsonify({
+            "error": str(e),
+            "opportunities": [],
+            "scanned": [],
+            "stats": {
+                "total_scanned": 0,
+                "opportunities_found": 0,
+                "filtered_out": 0,
+                "errors": 1
+            }
+        }), 500
 
 @app.route('/api/trade', methods=['POST'])
 def execute_trade():
@@ -371,29 +450,62 @@ def get_stock_quote(symbol):
             return jsonify({"error": "API credentials not configured. Please check your .env file."}), 500
         
         system = get_trading_system()
-        # Get latest bar for the symbol
-        latest_bar = system['client'].get_latest_bar(symbol.upper())
+        symbol_upper = symbol.upper()
         
-        if not latest_bar:
-            return jsonify({"error": "Symbol not found or no data available"}), 404
+        # Try to get quote info using multiple fallback methods
+        quote_info = system['client'].get_stock_quote_info(symbol_upper)
         
-        # Get previous bar for change calculation
-        bars = system['client'].get_bars(symbol.upper(), timeframe="1Min", limit=2)
-        prev_close = bars[0]['close'] if len(bars) > 1 else latest_bar['close']
+        if not quote_info:
+            # Try getting daily bars as last resort
+            daily_bars = system['client'].get_bars(symbol_upper, timeframe="1Day", limit=1)
+            if daily_bars and len(daily_bars) > 0:
+                bar = daily_bars[0]
+                quote_info = {
+                    "price": bar.get('close'),
+                    "high": bar.get('high'),
+                    "low": bar.get('low'),
+                    "open": bar.get('open'),
+                    "volume": bar.get('volume', 0),
+                    "source": "daily_bar"
+                }
+            else:
+                logger.warning(f"No data available for symbol {symbol_upper}")
+                return jsonify({
+                    "error": f"Symbol '{symbol_upper}' not found or no data available. "
+                            "The symbol may not be tradeable on Alpaca, or the market may be closed."
+                }), 404
         
-        current_price = latest_bar['close']
+        current_price = quote_info.get('price')
+        
+        # Get previous close for change calculation
+        # Try to get yesterday's close or previous bar
+        prev_close = current_price
+        try:
+            # Try to get previous day's bar
+            daily_bars = system['client'].get_bars(symbol_upper, timeframe="1Day", limit=2)
+            if daily_bars and len(daily_bars) >= 2:
+                prev_close = daily_bars[0].get('close', current_price)
+            elif daily_bars and len(daily_bars) == 1:
+                # Use open as previous if only one bar
+                prev_close = daily_bars[0].get('open', current_price)
+        except Exception as e:
+            logger.debug(f"Could not get previous close for {symbol_upper}: {e}")
+            # Use current price as fallback
+            prev_close = current_price
+        
         change = current_price - prev_close
         change_percent = (change / prev_close * 100) if prev_close > 0 else 0
         
         quote = {
-            "symbol": symbol.upper(),
+            "symbol": symbol_upper,
             "price": current_price,
             "change": change,
             "change_percent": change_percent,
-            "volume": latest_bar.get('volume', 0),
-            "high": latest_bar.get('high', current_price),
-            "low": latest_bar.get('low', current_price),
-            "open": latest_bar.get('open', current_price)
+            "volume": quote_info.get('volume', 0),
+            "high": quote_info.get('high', current_price),
+            "low": quote_info.get('low', current_price),
+            "open": quote_info.get('open', current_price),
+            "source": quote_info.get('source', 'unknown')
         }
         
         return jsonify(quote)
@@ -401,8 +513,11 @@ def get_stock_quote(symbol):
         logger.error(f"Authentication error getting stock quote: {e}")
         return jsonify({"error": f"Authentication failed: {str(e)}"}), 401
     except Exception as e:
-        logger.error(f"Error getting stock quote: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error getting stock quote for {symbol}: {e}", exc_info=True)
+        return jsonify({
+            "error": f"Error retrieving stock data: {str(e)}. "
+                    "Please check if the symbol is valid and tradeable on Alpaca."
+        }), 500
 
 @app.route('/api/watchlist')
 def get_watchlist():

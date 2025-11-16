@@ -32,17 +32,57 @@
 
         <div class="row mb-4">
             <div class="col-md-12">
-                <button class="btn btn-primary" onclick="runScanner()">Run Scanner</button>
+                <button class="btn btn-primary" onclick="runScanner()" id="scan-btn">
+                    <i class="bi bi-search"></i> Run Scanner
+                </button>
                 <button class="btn btn-secondary" onclick="refreshResults()">Refresh</button>
                 <span class="ms-3" id="scan-status"></span>
             </div>
         </div>
 
+        <!-- Scan Statistics -->
+        <div class="row mb-4" id="scan-stats" style="display: none;">
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h6 class="text-muted">Total Scanned</h6>
+                        <h3 id="stat-total">0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h6 class="text-muted">Opportunities Found</h6>
+                        <h3 class="text-success" id="stat-found">0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h6 class="text-muted">Filtered Out</h6>
+                        <h3 class="text-warning" id="stat-filtered">0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h6 class="text-muted">Errors</h6>
+                        <h3 class="text-danger" id="stat-errors">0</h3>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="row">
-            <div class="col-md-12">
+            <!-- Opportunities Table -->
+            <div class="col-md-12 mb-4">
                 <div class="card">
-                    <div class="card-header">
-                        <h5>Scanner Results</h5>
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5>Scanner Results - Opportunities</h5>
+                        <span class="badge bg-primary" id="opportunities-count">0 found</span>
                     </div>
                     <div class="card-body">
                         <div class="table-responsive">
@@ -69,52 +109,188 @@
                     </div>
                 </div>
             </div>
+
+            <!-- All Scanned Stocks -->
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5>All Scanned Stocks</h5>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="toggleScannedList()">
+                            <span id="toggle-text">Show</span> Details
+                        </button>
+                    </div>
+                    <div class="card-body" id="scanned-list" style="display: none;">
+                        <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                            <table class="table table-sm table-hover">
+                                <thead class="sticky-top bg-light">
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th>Status</th>
+                                        <th>Price</th>
+                                        <th>Score</th>
+                                        <th>Reason/Error</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="scanned-tbody">
+                                    <tr>
+                                        <td colspan="5" class="text-center">No scan results yet</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        let scannedListVisible = false;
+
         function runScanner() {
-            document.getElementById('scan-status').innerHTML = '<span class="text-info">Scanning...</span>';
+            const btn = document.getElementById('scan-btn');
+            const status = document.getElementById('scan-status');
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Scanning...';
+            status.innerHTML = '<span class="text-info"><i class="bi bi-hourglass-split"></i> Scanning stocks...</span>';
+            
             fetch('/api/scanner/run')
                 .then(response => response.json())
                 .then(data => {
-                    displayResults(data);
-                    document.getElementById('scan-status').innerHTML = '<span class="text-success">Scan complete</span>';
+                    if (data.error && !data.opportunities) {
+                        // Critical error
+                        status.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> ${data.error}</span>`;
+                        displayError(data.error);
+                    } else {
+                        displayResults(data);
+                        displayStats(data.stats || {});
+                        displayScannedList(data.scanned || []);
+                        
+                        const found = (data.opportunities || []).length;
+                        const total = data.stats?.total_scanned || 0;
+                        status.innerHTML = `<span class="text-success"><i class="bi bi-check-circle"></i> Scan complete: ${found} opportunities found from ${total} stocks</span>`;
+                    }
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-search"></i> Run Scanner';
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    document.getElementById('scan-status').innerHTML = '<span class="text-danger">Error scanning</span>';
+                    status.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> Error scanning</span>';
+                    displayError('Failed to run scanner: ' + error.message);
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-search"></i> Run Scanner';
                 });
         }
 
-        function displayResults(results) {
+        function displayResults(data) {
             const tbody = document.getElementById('scanner-tbody');
-            if (!results || results.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" class="text-center">No opportunities found</td></tr>';
+            const opportunities = data.opportunities || [];
+            const countBadge = document.getElementById('opportunities-count');
+            
+            countBadge.textContent = `${opportunities.length} found`;
+            
+            if (opportunities.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No opportunities found. Try adding more stocks to your watchlist.</td></tr>';
                 return;
             }
 
-            tbody.innerHTML = results.map(opp => `
+            tbody.innerHTML = opportunities.map(opp => `
                 <tr>
                     <td><strong>${opp.symbol}</strong></td>
-                    <td>$${opp.current_price.toFixed(4)}</td>
-                    <td>${opp.volume_ratio.toFixed(2)}x</td>
-                    <td>${opp.volatility_score.toFixed(2)}%</td>
-                    <td>${opp.momentum_score.toFixed(2)}</td>
-                    <td><strong>${opp.scalping_score.toFixed(2)}</strong></td>
-                    <td class="${opp.price_change_pct >= 0 ? 'text-success' : 'text-danger'}">
-                        ${opp.price_change_pct >= 0 ? '+' : ''}${opp.price_change_pct.toFixed(2)}%
+                    <td>$${(opp.current_price || 0).toFixed(4)}</td>
+                    <td>${(opp.volume_ratio || 0).toFixed(2)}x</td>
+                    <td>${(opp.volatility_score || 0).toFixed(2)}%</td>
+                    <td>${(opp.momentum_score || 0).toFixed(2)}</td>
+                    <td><strong class="text-primary">${(opp.scalping_score || 0).toFixed(2)}</strong></td>
+                    <td class="${(opp.price_change_pct || 0) >= 0 ? 'text-success' : 'text-danger'}">
+                        ${(opp.price_change_pct || 0) >= 0 ? '+' : ''}${(opp.price_change_pct || 0).toFixed(2)}%
                     </td>
                     <td>
-                        <button class="btn btn-sm btn-primary" onclick="viewDetails('${opp.symbol}')">View</button>
+                        <button class="btn btn-sm btn-primary" onclick="viewDetails('${opp.symbol}')">
+                            <i class="bi bi-eye"></i> View
+                        </button>
+                        <button class="btn btn-sm btn-success" onclick="addToWatchlist('${opp.symbol}')">
+                            <i class="bi bi-plus"></i> Trade
+                        </button>
                     </td>
                 </tr>
             `).join('');
         }
 
+        function displayStats(stats) {
+            document.getElementById('scan-stats').style.display = 'flex';
+            document.getElementById('stat-total').textContent = stats.total_scanned || 0;
+            document.getElementById('stat-found').textContent = stats.opportunities_found || 0;
+            document.getElementById('stat-filtered').textContent = stats.filtered_out || 0;
+            document.getElementById('stat-errors').textContent = stats.errors || 0;
+        }
+
+        function displayScannedList(scanned) {
+            const tbody = document.getElementById('scanned-tbody');
+            
+            if (!scanned || scanned.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No stocks scanned</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = scanned.map(item => {
+                const status = item.status || 'unknown';
+                let statusBadge = '';
+                let reason = '';
+                
+                if (status === 'opportunity') {
+                    statusBadge = '<span class="badge bg-success">Opportunity</span>';
+                    reason = `Score: ${(item.scalping_score || 0).toFixed(2)}`;
+                } else if (status === 'filtered') {
+                    statusBadge = '<span class="badge bg-warning">Filtered</span>';
+                    reason = item.reason || 'Did not meet criteria';
+                } else if (status === 'error') {
+                    statusBadge = '<span class="badge bg-danger">Error</span>';
+                    reason = item.error || 'Unknown error';
+                } else {
+                    statusBadge = '<span class="badge bg-secondary">Unknown</span>';
+                }
+                
+                return `
+                    <tr>
+                        <td><strong>${item.symbol}</strong></td>
+                        <td>${statusBadge}</td>
+                        <td>${item.current_price ? '$' + parseFloat(item.current_price).toFixed(4) : '-'}</td>
+                        <td>${item.scalping_score ? parseFloat(item.scalping_score).toFixed(2) : '-'}</td>
+                        <td class="text-muted small">${reason}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function displayError(errorMsg) {
+            const tbody = document.getElementById('scanner-tbody');
+            tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger"><i class="bi bi-exclamation-triangle"></i> ${errorMsg}</td></tr>`;
+        }
+
+        function toggleScannedList() {
+            scannedListVisible = !scannedListVisible;
+            const listDiv = document.getElementById('scanned-list');
+            const toggleText = document.getElementById('toggle-text');
+            
+            if (scannedListVisible) {
+                listDiv.style.display = 'block';
+                toggleText.textContent = 'Hide';
+            } else {
+                listDiv.style.display = 'none';
+                toggleText.textContent = 'Show';
+            }
+        }
+
         function viewDetails(symbol) {
-            alert(`View details for ${symbol} - Feature coming soon!`);
+            window.location.href = `/trade?symbol=${symbol}`;
+        }
+
+        function addToWatchlist(symbol) {
+            window.location.href = `/trade?symbol=${symbol}`;
         }
 
         function refreshResults() {
@@ -122,7 +298,7 @@
         }
 
         // Auto-refresh every 60 seconds
-        setInterval(refreshResults, 60000);
+        // setInterval(refreshResults, 60000);
     </script>
 </body>
 </html>
