@@ -471,3 +471,60 @@ socket.on('status', function(data) {
     console.log('Status:', data);
 });
 
+// Notifications
+function loadNotifications() {
+    fetch('/api/notifications?limit=10&unread_only=true')
+        .then(response => response.json())
+        .then(data => {
+            const badge = document.getElementById('notification-badge');
+            const count = data.notifications ? data.notifications.length : 0;
+            
+            if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = 'inline';
+            } else {
+                badge.style.display = 'none';
+            }
+            
+            // Update notifications list
+            const list = document.getElementById('notifications-list');
+            if (data.notifications && data.notifications.length > 0) {
+                list.innerHTML = data.notifications.map(n => `
+                    <div class="border-bottom pb-2 mb-2" onclick="markRead(${n.id})" style="cursor: pointer;">
+                        <div class="d-flex justify-content-between">
+                            <strong style="font-size: 0.8rem;">${n.title}</strong>
+                            <span class="badge bg-${n.type === 'success' ? 'success' : n.type === 'warning' ? 'warning' : n.type === 'error' ? 'danger' : 'info'}" style="font-size: 0.7rem;">${n.type}</span>
+                        </div>
+                        <div style="font-size: 0.75rem; color: #6c757d;">${n.message}</div>
+                        <div style="font-size: 0.7rem; color: #999;">${new Date(n.timestamp).toLocaleString()}</div>
+                    </div>
+                `).join('');
+            } else {
+                list.innerHTML = '<p class="text-muted text-center mb-0" style="font-size: 0.8rem;">No new notifications</p>';
+            }
+        })
+        .catch(error => console.error('Error loading notifications:', error));
+}
+
+function toggleNotifications() {
+    const panel = document.getElementById('notifications-panel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    if (panel.style.display === 'block') {
+        loadNotifications();
+    }
+}
+
+function markRead(notificationId) {
+    fetch(`/api/notifications/${notificationId}/read`, { method: 'POST' })
+        .then(() => loadNotifications());
+}
+
+function markAllRead() {
+    fetch('/api/notifications/read-all', { method: 'POST' })
+        .then(() => loadNotifications());
+}
+
+// Load notifications periodically
+setInterval(loadNotifications, 10000);
+loadNotifications();
+

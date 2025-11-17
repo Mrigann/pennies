@@ -17,66 +17,84 @@
                 <a class="nav-link me-3" href="/scanner">Scanner</a>
                 <a class="nav-link me-3" href="/positions">Positions</a>
                 <a class="nav-link me-3" href="/approvals">Approvals</a>
-                <a class="nav-link" href="/analytics">Analytics</a>
+                <a class="nav-link me-3" href="/analytics">Analytics</a>
+                <a class="nav-link me-3" href="/backtest">Backtest</a>
+                <a class="nav-link" href="/strategy-config">Strategy Config</a>
             </div>
         </div>
     </nav>
 
-    <div class="container mt-4">
-        <div class="row mb-4">
-            <div class="col-md-12">
+    <div class="container mt-3">
+        <div class="row mb-3">
+            <div class="col-md-12 d-flex justify-content-between align-items-center">
                 <h1>Trading Dashboard</h1>
-                <div class="alert alert-info" id="trading-mode">
-                    <strong>Mode:</strong> <span id="mode-display">Loading...</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="row mb-4">
-            <div class="col-md-3">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">Account Value</h5>
-                        <h3 class="text-primary" id="account-value">$0.00</h3>
+                <div class="d-flex align-items-center">
+                    <div class="alert alert-info mb-0 py-2 me-2" id="trading-mode" style="font-size: 0.85rem;">
+                        <strong>Mode:</strong> <span id="mode-display">Loading...</span>
                     </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">Buying Power</h5>
-                        <h3 class="text-success" id="buying-power">$0.00</h3>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">Daily P&L</h5>
-                        <h3 class="text-info" id="daily-pnl">$0.00</h3>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">Active Positions</h5>
-                        <h3 class="text-warning" id="active-positions">0</h3>
+                    <div class="position-relative">
+                        <button class="btn btn-sm btn-outline-light" onclick="toggleNotifications()" id="notifications-btn">
+                            <span id="notification-badge" class="badge bg-danger" style="display: none;">0</span>
+                            Notifications
+                        </button>
+                        <div id="notifications-panel" class="position-absolute bg-white border rounded shadow p-2" 
+                             style="display: none; width: 300px; max-height: 400px; overflow-y: auto; right: 0; top: 100%; z-index: 1000; margin-top: 5px;">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <strong style="font-size: 0.85rem;">Notifications</strong>
+                                <button class="btn btn-sm btn-link p-0" onclick="markAllRead()" style="font-size: 0.75rem;">Mark all read</button>
+                            </div>
+                            <div id="notifications-list"></div>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <div class="row mb-4">
+        <div class="row mb-3">
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-body p-compact">
+                        <div class="stat-label">Account Value</div>
+                        <div class="stat-value text-primary" id="account-value">$0.00</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-body p-compact">
+                        <div class="stat-label">Buying Power</div>
+                        <div class="stat-value text-success" id="buying-power">$0.00</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-body p-compact">
+                        <div class="stat-label">Daily P&L</div>
+                        <div class="stat-value text-info" id="daily-pnl">$0.00</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-body p-compact">
+                        <div class="stat-label">Active Positions</div>
+                        <div class="stat-value text-warning" id="active-positions">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mb-3">
             <div class="col-md-6">
                 <div class="card">
-                    <div class="card-header">
-                        <h5>Risk Management</h5>
+                    <div class="card-header py-2">
+                        <h6 class="mb-0">Risk Management</h6>
                     </div>
-                    <div class="card-body">
-                        <table class="table table-sm">
+                    <div class="card-body p-compact">
+                        <table class="table table-sm mb-0">
                             <tr>
-                                <td>Daily Betting:</td>
+                                <td style="width: 50%;">Daily Betting:</td>
                                 <td id="daily-betting">$0.00</td>
                             </tr>
                             <tr>
@@ -105,19 +123,19 @@
             </div>
             <div class="col-md-6">
                 <div class="card">
-                    <div class="card-header">
-                        <h5>Trading Mode</h5>
+                    <div class="card-header py-2">
+                        <h6 class="mb-0">Trading Mode</h6>
                     </div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <label class="form-label">Switch Mode:</label>
-                            <select class="form-select" id="mode-select">
+                    <div class="card-body p-compact">
+                        <div class="mb-2">
+                            <label class="form-label mb-1">Switch Mode:</label>
+                            <select class="form-select form-select-sm" id="mode-select">
                                 <option value="paper">Paper Trading</option>
                                 <option value="live">Live Trading</option>
                             </select>
                         </div>
-                        <button class="btn btn-primary" onclick="switchMode()">Switch Mode</button>
-                        <div class="alert alert-warning mt-3" id="mode-warning" style="display: none;">
+                        <button class="btn btn-primary btn-sm" onclick="switchMode()">Switch Mode</button>
+                        <div class="alert alert-warning mt-2 py-2" id="mode-warning" style="display: none; font-size: 0.8rem;">
                             Warning: Switching to live trading will use real money!
                         </div>
                     </div>
@@ -125,19 +143,19 @@
             </div>
         </div>
 
-        <div class="row mb-4">
+        <div class="row mb-3">
             <div class="col-md-12">
                 <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5>Real-Time Trading Signals</h5>
+                    <div class="card-header d-flex justify-content-between align-items-center py-2">
+                        <h6 class="mb-0">Real-Time Trading Signals</h6>
                         <div>
                             <span class="badge bg-secondary me-2" id="scanner-status">Scanner: Stopped</span>
                             <button class="btn btn-sm btn-success" id="start-scanner-btn" onclick="toggleScanner()">Start Scanner</button>
                         </div>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body p-compact">
                         <div id="signals-container">
-                            <p class="text-muted text-center">No signals available. Start the scanner to begin monitoring.</p>
+                            <p class="text-muted text-center mb-0" style="font-size: 0.85rem;">No signals available. Start the scanner to begin monitoring.</p>
                         </div>
                     </div>
                 </div>
@@ -147,18 +165,18 @@
         <div class="row">
             <div class="col-md-12">
                 <div class="card">
-                    <div class="card-header">
-                        <h5>Active Positions</h5>
+                    <div class="card-header py-2">
+                        <h6 class="mb-0">Active Positions</h6>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body p-compact">
                         <div class="table-responsive">
-                            <table class="table table-striped" id="positions-table">
+                            <table class="table table-striped table-sm mb-0" id="positions-table">
                                 <thead>
                                     <tr>
                                         <th>Symbol</th>
-                                        <th>Quantity</th>
-                                        <th>Entry Price</th>
-                                        <th>Current Price</th>
+                                        <th>Qty</th>
+                                        <th>Entry</th>
+                                        <th>Current</th>
                                         <th>P&L</th>
                                         <th>P&L %</th>
                                         <th>Actions</th>

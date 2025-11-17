@@ -37,6 +37,11 @@ from trading.stock_scanner import StockScanner
 from trading.position_tracker import PositionTracker
 from trading.continuous_scanner import ContinuousScanner
 from trading.enhanced_strategy import EnhancedStrategy
+from trading.scaling_strategy import ScalingStrategy
+from trading.exit_manager import ExitManager
+from trading.performance_analytics import PerformanceAnalytics
+from trading.backtesting import Backtester
+from trading.notifications import NotificationManager
 from main import TradingSystem
 from utils.visualizer import (
     generate_daily_pnl_chart,
@@ -110,8 +115,15 @@ def get_trading_system():
                     risk_manager = RiskManager(initial_capital=capital)
                     position_tracker = PositionTracker(client, strategy)
                     
-                    # Create continuous scanner
-                    continuous_scanner_instance = ContinuousScanner(client)
+                    # Create scaling strategy and exit manager first
+                    scaling_strategy = ScalingStrategy()
+                    exit_manager = ExitManager(client)
+                    performance_analytics = PerformanceAnalytics()
+                    backtester = Backtester(client)
+                    notification_manager = NotificationManager()
+                    
+                    # Create continuous scanner with exit manager
+                    continuous_scanner_instance = ContinuousScanner(client, exit_manager=exit_manager)
                     
                     trading_system = {
                         'client': client,
@@ -119,7 +131,12 @@ def get_trading_system():
                         'scanner': scanner,
                         'risk_manager': risk_manager,
                         'position_tracker': position_tracker,
-                        'continuous_scanner': continuous_scanner_instance
+                        'continuous_scanner': continuous_scanner_instance,
+                        'scaling_strategy': scaling_strategy,
+                        'exit_manager': exit_manager,
+                        'performance_analytics': performance_analytics,
+                        'backtester': backtester,
+                        'notification_manager': notification_manager
                     }
                     logger.info("Trading system initialized successfully")
                 except Exception as e:
@@ -183,6 +200,16 @@ def positions():
 def analytics():
     """Analytics page."""
     return render_template('analytics.html')
+
+@app.route('/strategy-config')
+def strategy_config():
+    """Strategy configuration page."""
+    return render_template('strategy_config.html')
+
+@app.route('/backtest')
+def backtest():
+    """Backtesting page."""
+    return render_template('backtest.html')
 
 @app.route('/trade')
 def trade():
@@ -324,7 +351,7 @@ def run_scanner():
 
 @app.route('/api/trade', methods=['POST'])
 def execute_trade():
-    """Execute a manual trade."""
+    """Execute a manual trade with optional scaling strategy."""
     try:
         data = request.json
         symbol = data.get('symbol')
@@ -332,12 +359,16 @@ def execute_trade():
         side = data.get('side', 'buy')
         order_type = data.get('order_type', 'market')
         limit_price = data.get('limit_price')
+        use_scaling = data.get('use_scaling', True)  # Default to using scaling
         
         if not symbol or qty <= 0:
             return jsonify({"error": "Invalid parameters"}), 400
         
         system = get_trading_system()
-        order = system['client'].place_order(
+        client = system['client']
+        
+        # Place the order
+        order = client.place_order(
             symbol=symbol,
             qty=qty,
             side=side,
@@ -345,7 +376,56 @@ def execute_trade():
             limit_price=limit_price
         )
         
-        return jsonify(order or {"error": "Order failed"})
+        if not order:
+            return jsonify({"error": "Order failed"}), 500
+        
+        # If buy order and scaling enabled, register position with scaling plan
+        if side == 'buy' and use_scaling:
+            try:
+                exit_manager = system.get('exit_manager')
+                if exit_manager:
+                    # Get entry price (use limit price if available, otherwise current price)
+                    entry_price = limit_price if limit_price else 0
+                    if not entry_price:
+                        quote = client.get_stock_quote_info(symbol)
+                        entry_price = quote.get('price', 0) if quote else 0
+                    
+                    if entry_price > 0:
+                        # Calculate stop loss
+                        from trading.risk_manager import RiskManager
+                        risk_mgr = RiskManager()
+                        stop_loss_info = risk_mgr.calculate_stop_loss_with_safety(entry_price)
+                        stop_loss = stop_loss_info['stop_loss']
+                        
+                        # Get volatility if available
+                        volatility = None
+                        try:
+                            bars = client.get_bars(symbol, timeframe="1Min", limit=20)
+                            if bars:
+                                from trading.enhanced_strategy import EnhancedStrategy
+                                strategy = EnhancedStrategy()
+                                df = strategy.calculate_indicators(bars)
+                                if not df.empty:
+                                    volatility = df.iloc[-1].get('atr_percent', None)
+                        except:
+                            pass
+                        
+                        # Register position with scaling plan
+                        scaling_plan = exit_manager.register_position(
+                            symbol=symbol,
+                            entry_price=entry_price,
+                            position_size=int(qty),
+                            stop_loss=stop_loss,
+                            volatility=volatility
+                        )
+                        
+                        order['scaling_plan'] = scaling_plan
+                        logger.info(f"Registered scaling plan for {symbol}")
+            except Exception as e:
+                logger.error(f"Error registering scaling plan: {e}")
+                # Don't fail the order if scaling registration fails
+        
+        return jsonify(order)
     except Exception as e:
         logger.error(f"Error executing trade: {e}")
         return jsonify({"error": str(e)}), 500
@@ -873,6 +953,155 @@ def scan_symbol_now(symbol):
         logger.error(f"Error scanning {symbol}: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/scaling/calculate', methods=['POST'])
+def calculate_scaling_plan():
+    """Calculate scaling exit plan for a position."""
+    try:
+        data = request.json
+        symbol = data.get('symbol', '').upper()
+        entry_price = float(data.get('entry_price', 0))
+        position_size = int(data.get('position_size', 0))
+        stop_loss = float(data.get('stop_loss', 0))
+        volatility = data.get('volatility')  # Optional
+        
+        if not symbol or entry_price <= 0 or position_size <= 0:
+            return jsonify({"error": "Invalid parameters"}), 400
+        
+        system = get_trading_system()
+        scaling_strategy = system.get('scaling_strategy')
+        
+        if not scaling_strategy:
+            return jsonify({"error": "Scaling strategy not available"}), 500
+        
+        scaling_plan = scaling_strategy.create_scaling_plan(
+            symbol=symbol,
+            entry_price=entry_price,
+            position_size=position_size,
+            stop_loss=stop_loss,
+            volatility=volatility
+        )
+        
+        return jsonify(scaling_plan)
+    except Exception as e:
+        logger.error(f"Error calculating scaling plan: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scaling/optimize-size', methods=['POST'])
+def optimize_position_size():
+    """Optimize position size for scaling strategy."""
+    try:
+        data = request.json
+        entry_price = float(data.get('entry_price', 0))
+        stop_loss = float(data.get('stop_loss', 0))
+        available_capital = float(data.get('available_capital', 0))
+        risk_per_trade = data.get('risk_per_trade')  # Optional
+        
+        if entry_price <= 0 or stop_loss <= 0:
+            return jsonify({"error": "Invalid price parameters"}), 400
+        
+        system = get_trading_system()
+        scaling_strategy = system.get('scaling_strategy')
+        
+        if not scaling_strategy:
+            return jsonify({"error": "Scaling strategy not available"}), 500
+        
+        optimal_size, sizing_details = scaling_strategy.optimize_position_size(
+            available_capital=available_capital,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            risk_per_trade=risk_per_trade
+        )
+        
+        return jsonify({
+            'optimal_size': optimal_size,
+            'sizing_details': sizing_details
+        })
+    except Exception as e:
+        logger.error(f"Error optimizing position size: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/positions/scaling/<symbol>')
+def get_position_scaling_status(symbol):
+    """Get scaling status for a position."""
+    try:
+        system = get_trading_system()
+        exit_manager = system.get('exit_manager')
+        
+        if not exit_manager:
+            return jsonify({"error": "Exit manager not available"}), 500
+        
+        status = exit_manager.get_position_status(symbol.upper())
+        
+        if not status:
+            return jsonify({"error": "Position not found"}), 404
+        
+        return jsonify(status)
+    except Exception as e:
+        logger.error(f"Error getting scaling status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/positions/scaling/all')
+def get_all_scaling_positions():
+    """Get all positions with scaling plans."""
+    try:
+        system = get_trading_system()
+        exit_manager = system.get('exit_manager')
+        
+        if not exit_manager:
+            return jsonify({"error": "Exit manager not available"}), 500
+        
+        positions = exit_manager.get_all_active_positions()
+        
+        return jsonify({
+            'positions': positions,
+            'count': len(positions)
+        })
+    except Exception as e:
+        logger.error(f"Error getting scaling positions: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/positions/scaling/check-exits', methods=['POST'])
+def check_and_execute_exits():
+    """Check and execute exits for all positions."""
+    try:
+        system = get_trading_system()
+        exit_manager = system.get('exit_manager')
+        client = system.get('client')
+        
+        if not exit_manager:
+            return jsonify({"error": "Exit manager not available"}), 500
+        
+        # Get all active positions
+        positions = exit_manager.get_all_active_positions()
+        
+        executed_exits = []
+        for position in positions:
+            symbol = position['symbol']
+            
+            # Get current price
+            quote = client.get_stock_quote_info(symbol)
+            if not quote:
+                continue
+            
+            current_price = quote.get('price', 0)
+            if current_price <= 0:
+                continue
+            
+            # Check and execute exits
+            exits = exit_manager.check_and_execute_exits(symbol, current_price)
+            executed_exits.extend(exits)
+            
+            # Update trailing stop
+            exit_manager.update_trailing_stop(symbol, current_price)
+        
+        return jsonify({
+            'executed_exits': executed_exits,
+            'count': len(executed_exits)
+        })
+    except Exception as e:
+        logger.error(f"Error checking exits: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @socketio.on('connect')
 def handle_connect():
     """Handle WebSocket connection."""
@@ -883,6 +1112,186 @@ def handle_connect():
 def handle_disconnect():
     """Handle WebSocket disconnection."""
     logger.info("Client disconnected")
+
+# Performance Analytics API
+@app.route('/api/analytics/summary')
+def get_analytics_summary():
+    """Get performance analytics summary."""
+    try:
+        system = get_trading_system()
+        analytics = system.get('performance_analytics')
+        
+        if not analytics:
+            return jsonify({"error": "Analytics not available"}), 500
+        
+        summary = analytics.get_summary()
+        scaling_perf = analytics.get_scaling_performance()
+        daily_stats = analytics.get_daily_stats(days=30)
+        
+        return jsonify({
+            'summary': summary,
+            'scaling_performance': scaling_perf,
+            'daily_stats': daily_stats
+        })
+    except Exception as e:
+        logger.error(f"Error getting analytics summary: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/analytics/symbol/<symbol>')
+def get_symbol_analytics(symbol):
+    """Get performance analytics for a specific symbol."""
+    try:
+        system = get_trading_system()
+        analytics = system.get('performance_analytics')
+        
+        if not analytics:
+            return jsonify({"error": "Analytics not available"}), 500
+        
+        symbol_perf = analytics.get_symbol_performance(symbol)
+        return jsonify(symbol_perf)
+    except Exception as e:
+        logger.error(f"Error getting symbol analytics: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Backtesting API
+@app.route('/api/backtest/run', methods=['POST'])
+def run_backtest():
+    """Run a backtest."""
+    try:
+        data = request.json
+        symbol = data.get('symbol')
+        start_date = datetime.fromisoformat(data.get('start_date'))
+        end_date = datetime.fromisoformat(data.get('end_date'))
+        initial_capital = float(data.get('initial_capital', 10000))
+        use_scaling = data.get('use_scaling', True)
+        
+        if not symbol or not start_date or not end_date:
+            return jsonify({"error": "Missing required parameters"}), 400
+        
+        system = get_trading_system()
+        backtester = system.get('backtester')
+        
+        if not backtester:
+            return jsonify({"error": "Backtester not available"}), 500
+        
+        results = backtester.run_backtest(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=initial_capital,
+            use_scaling=use_scaling
+        )
+        
+        return jsonify(results)
+    except Exception as e:
+        logger.error(f"Error running backtest: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Strategy Customization API
+@app.route('/api/strategy/config', methods=['GET'])
+def get_strategy_config():
+    """Get current strategy configuration."""
+    try:
+        system = get_trading_system()
+        scaling_strategy = system.get('scaling_strategy')
+        
+        if not scaling_strategy:
+            return jsonify({"error": "Strategy not available"}), 500
+        
+        return jsonify({
+            'quick_exit_ratio': scaling_strategy.quick_exit_ratio,
+            'runner_ratio': scaling_strategy.runner_ratio,
+            'profit_targets': scaling_strategy.profit_targets
+        })
+    except Exception as e:
+        logger.error(f"Error getting strategy config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/strategy/config', methods=['POST'])
+def update_strategy_config():
+    """Update strategy configuration."""
+    try:
+        data = request.json
+        system = get_trading_system()
+        scaling_strategy = system.get('scaling_strategy')
+        
+        if not scaling_strategy:
+            return jsonify({"error": "Strategy not available"}), 500
+        
+        if 'quick_exit_ratio' in data:
+            scaling_strategy.quick_exit_ratio = float(data['quick_exit_ratio'])
+        if 'runner_ratio' in data:
+            scaling_strategy.runner_ratio = float(data['runner_ratio'])
+        if 'profit_targets' in data:
+            scaling_strategy.profit_targets.update(data['profit_targets'])
+        
+        return jsonify({
+            'success': True,
+            'config': {
+                'quick_exit_ratio': scaling_strategy.quick_exit_ratio,
+                'runner_ratio': scaling_strategy.runner_ratio,
+                'profit_targets': scaling_strategy.profit_targets
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error updating strategy config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Notifications API
+@app.route('/api/notifications')
+def get_notifications():
+    """Get notifications."""
+    try:
+        system = get_trading_system()
+        notification_manager = system.get('notification_manager')
+        
+        if not notification_manager:
+            return jsonify({"notifications": []})
+        
+        limit = request.args.get('limit', 20, type=int)
+        unread_only = request.args.get('unread_only', 'false').lower() == 'true'
+        
+        notifications = notification_manager.get_notifications(
+            limit=limit,
+            unread_only=unread_only
+        )
+        
+        return jsonify({"notifications": notifications})
+    except Exception as e:
+        logger.error(f"Error getting notifications: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/notifications/<int:notification_id>/read', methods=['POST'])
+def mark_notification_read(notification_id):
+    """Mark a notification as read."""
+    try:
+        system = get_trading_system()
+        notification_manager = system.get('notification_manager')
+        
+        if not notification_manager:
+            return jsonify({"error": "Notification manager not available"}), 500
+        
+        success = notification_manager.mark_read(notification_id)
+        return jsonify({"success": success})
+    except Exception as e:
+        logger.error(f"Error marking notification read: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/notifications/read-all', methods=['POST'])
+def mark_all_notifications_read():
+    """Mark all notifications as read."""
+    try:
+        system = get_trading_system()
+        notification_manager = system.get('notification_manager')
+        
+        if not notification_manager:
+            return jsonify({"error": "Notification manager not available"}), 500
+        
+        notification_manager.mark_all_read()
+        return jsonify({"success": True})
+    except Exception as e:
+        logger.error(f"Error marking all notifications read: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     logger.info(f"Starting web server on {settings.WEB_HOST}:{settings.WEB_PORT}")

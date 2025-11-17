@@ -79,6 +79,7 @@ class PositionTracker:
                 'symbol': symbol,
                 'qty': position['qty'],
                 'entry_price': position['avg_entry_price'],
+                'avg_entry_price': position['avg_entry_price'],
                 'entry_time': datetime.now(),
                 'stop_loss': None,
                 'profit_target': None,
@@ -95,6 +96,7 @@ class PositionTracker:
         # Update current values
         stored_pos['current_price'] = current_price
         stored_pos['market_value'] = position['market_value']
+        stored_pos['avg_entry_price'] = stored_pos.get('avg_entry_price', stored_pos['entry_price'])
         stored_pos['unrealized_pl'] = position['unrealized_pl']
         stored_pos['unrealized_plpc'] = position['unrealized_plpc']
         

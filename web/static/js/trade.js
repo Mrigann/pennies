@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Update estimated cost as user types
     document.getElementById('trade-qty').addEventListener('input', updateTradeSummary);
     document.getElementById('trade-limit-price').addEventListener('input', updateTradeSummary);
+    document.getElementById('use-scaling').addEventListener('change', updateScalingPreview);
     document.getElementById('trade-order-type').addEventListener('change', function() {
         const limitRow = document.getElementById('limit-price-row');
         if (this.value === 'limit') {
@@ -141,6 +142,87 @@ function updateTradeSummary() {
             buyingPowerEl.className = 'fw-bold text-success';
         }
     }
+    
+    // Update scaling preview if enabled
+    updateScalingPreview();
+}
+
+function updateScalingPreview() {
+    const useScaling = document.getElementById('use-scaling').checked;
+    const previewDiv = document.getElementById('scaling-preview');
+    const qty = parseFloat(document.getElementById('trade-qty').value) || 0;
+    const symbol = document.getElementById('trade-symbol').value.toUpperCase().trim();
+    
+    if (!useScaling || qty < 2 || !symbol) {
+        previewDiv.style.display = 'none';
+        return;
+    }
+    
+    // Get current price for preview
+    if (currentStock && currentStock.price) {
+        const entryPrice = currentStock.price;
+        const stopLoss = entryPrice * (1 - 0.01); // 1% stop loss
+        
+        // Calculate scaling plan
+        fetch('/api/scaling/calculate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                symbol: symbol,
+                entry_price: entryPrice,
+                position_size: qty,
+                stop_loss: stopLoss
+            })
+        })
+        .then(response => response.json())
+        .then(plan => {
+            if (plan.error) {
+                previewDiv.style.display = 'none';
+                return;
+            }
+            
+            const quickExit = plan.quick_exit;
+            const runnerExits = plan.runner_exits;
+            
+            let runnerHtml = '';
+            for (const [key, exit] of Object.entries(runnerExits)) {
+                runnerHtml += `
+                    <div class="small">
+                        <strong>${key.toUpperCase()}:</strong> ${exit.size} shares @ $${exit.price.toFixed(4)} (${exit.target_pct.toFixed(2)}% profit)
+                    </div>
+                `;
+            }
+            
+            document.getElementById('scaling-plan-details').innerHTML = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="text-success">
+                            <strong>Quick Exit:</strong> ${quickExit.size} shares @ $${quickExit.price.toFixed(4)}<br>
+                            <small>Target: ${quickExit.target_pct.toFixed(2)}% profit</small>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="text-primary">
+                            <strong>Runner Positions:</strong><br>
+                            ${runnerHtml}
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-2">
+                    <small class="text-muted">
+                        Expected Profit: $${plan.expected_profit.total_profit.toFixed(2)} 
+                        (${plan.expected_profit.total_profit_pct.toFixed(2)}%)
+                    </small>
+                </div>
+            `;
+            
+            previewDiv.style.display = 'block';
+        })
+        .catch(error => {
+            console.error('Error calculating scaling plan:', error);
+            previewDiv.style.display = 'none';
+        });
+    }
 }
 
 function executeTrade() {
@@ -149,6 +231,7 @@ function executeTrade() {
     const qty = parseFloat(document.getElementById('trade-qty').value);
     const orderType = document.getElementById('trade-order-type').value;
     const limitPrice = orderType === 'limit' ? parseFloat(document.getElementById('trade-limit-price').value) : null;
+    const useScaling = document.getElementById('use-scaling').checked;
     
     if (!symbol || !qty || qty <= 0) {
         alert('Please fill in all required fields');
@@ -160,7 +243,13 @@ function executeTrade() {
         return;
     }
     
-    if (!confirm(`Confirm ${side.toUpperCase()} ${qty} shares of ${symbol}?`)) {
+    if (useScaling && qty < 2) {
+        alert('Scaling strategy requires at least 2 shares');
+        return;
+    }
+    
+    const scalingText = useScaling ? ' with scaling exit strategy' : '';
+    if (!confirm(`Confirm ${side.toUpperCase()} ${qty} shares of ${symbol}${scalingText}?`)) {
         return;
     }
     
@@ -168,7 +257,8 @@ function executeTrade() {
         symbol: symbol,
         qty: qty,
         side: side,
-        order_type: orderType
+        order_type: orderType,
+        use_scaling: useScaling
     };
     
     if (limitPrice) {
@@ -186,11 +276,26 @@ function executeTrade() {
         if (data.error) {
             resultDiv.innerHTML = `<div class="alert alert-danger">Error: ${data.error}</div>`;
         } else {
+            let scalingInfo = '';
+            if (data.scaling_plan) {
+                const plan = data.scaling_plan;
+                scalingInfo = `
+                    <hr>
+                    <strong>Scaling Exit Plan Created:</strong><br>
+                    <small>
+                        Quick Exit: ${plan.quick_exit.size} shares @ $${plan.quick_exit.price.toFixed(4)}<br>
+                        Runner: ${Object.values(plan.runner_exits).reduce((sum, e) => sum + e.size, 0)} shares for higher targets<br>
+                        Expected Profit: $${plan.expected_profit.total_profit.toFixed(2)}
+                    </small>
+                `;
+            }
+            
             resultDiv.innerHTML = `
                 <div class="alert alert-success">
                     <strong>Order Placed Successfully!</strong><br>
                     Order ID: ${data.id}<br>
                     Status: ${data.status}
+                    ${scalingInfo}
                 </div>
             `;
             clearTradeForm();
@@ -210,10 +315,85 @@ function executeTrade() {
     });
 }
 
+function optimizePositionSize() {
+    const symbol = document.getElementById('trade-symbol').value.toUpperCase().trim();
+    const entryPrice = currentStock ? currentStock.price : parseFloat(document.getElementById('trade-limit-price').value);
+    
+    if (!symbol || !entryPrice || entryPrice <= 0) {
+        alert('Please select a stock first or enter a limit price');
+        return;
+    }
+    
+    // Get account info for available capital
+    fetch('/api/account')
+        .then(response => response.json())
+        .then(account => {
+            const availableCapital = parseFloat(account.buying_power || 0);
+            const stopLoss = entryPrice * (1 - 0.01); // 1% stop loss
+            
+            // Calculate optimized size
+            fetch('/api/scaling/optimize-size', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    entry_price: entryPrice,
+                    stop_loss: stopLoss,
+                    available_capital: availableCapital
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+                
+                const optimalSize = data.optimal_size;
+                const details = data.sizing_details;
+                
+                if (optimalSize <= 0) {
+                    alert('Position too small for scaling strategy. Minimum 2 shares required.');
+                    return;
+                }
+                
+                document.getElementById('optimized-size-value').textContent = optimalSize;
+                document.getElementById('optimized-size-details').innerHTML = `
+                    <div class="row">
+                        <div class="col-6">
+                            <strong>Quick Exit:</strong> ${details.quick_exit_size} shares<br>
+                            <strong>Runner:</strong> ${details.runner_size} shares
+                        </div>
+                        <div class="col-6">
+                            <strong>Risk:</strong> $${details.risk_amount.toFixed(2)}<br>
+                            <strong>Capital Required:</strong> $${details.capital_required.toFixed(2)}
+                        </div>
+                    </div>
+                `;
+                document.getElementById('optimized-size-result').style.display = 'block';
+            })
+            .catch(error => {
+                console.error('Error optimizing size:', error);
+                alert('Error calculating optimal size');
+            });
+        })
+        .catch(error => {
+            console.error('Error getting account:', error);
+            alert('Error getting account information');
+        });
+}
+
+function useOptimizedSize() {
+    const optimizedSize = document.getElementById('optimized-size-value').textContent;
+    document.getElementById('trade-qty').value = optimizedSize;
+    updateTradeSummary();
+}
+
 function clearTradeForm() {
     document.getElementById('trade-form').reset();
     document.getElementById('limit-price-row').style.display = 'none';
     document.getElementById('selected-stock').style.display = 'none';
+    document.getElementById('optimized-size-result').style.display = 'none';
+    document.getElementById('scaling-preview').style.display = 'none';
     currentStock = null;
     updateTradeSummary();
 }

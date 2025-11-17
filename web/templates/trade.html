@@ -133,8 +133,14 @@
                             <div class="row mb-3">
                                 <div class="col-md-6">
                                     <label class="form-label">Quantity</label>
-                                    <input type="number" class="form-control" id="trade-qty" 
-                                           placeholder="Enter quantity" min="1" step="1" required>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="trade-qty" 
+                                               placeholder="Enter quantity" min="1" step="1" required>
+                                        <button class="btn btn-outline-secondary" type="button" onclick="optimizePositionSize()" title="Calculate optimal position size">
+                                            <i class="bi bi-calculator"></i> Optimize
+                                        </button>
+                                    </div>
+                                    <small class="text-muted">Or use optimized sizing button</small>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label">Order Type</label>
@@ -142,6 +148,41 @@
                                         <option value="market">Market</option>
                                         <option value="limit">Limit</option>
                                     </select>
+                                </div>
+                            </div>
+                            
+                            <div class="row mb-3" id="optimized-size-result" style="display: none;">
+                                <div class="col-md-12">
+                                    <div class="alert alert-info">
+                                        <strong>Optimized Size:</strong> <span id="optimized-size-value">0</span> shares
+                                        <button class="btn btn-sm btn-primary ms-2" onclick="useOptimizedSize()">Use This Size</button>
+                                        <div class="mt-2 small" id="optimized-size-details"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row mb-3">
+                                <div class="col-md-12">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="use-scaling" checked>
+                                        <label class="form-check-label" for="use-scaling">
+                                            <strong>Use Scaling Exit Strategy</strong> (Fibonacci-style partial exits)
+                                        </label>
+                                    </div>
+                                    <small class="text-muted">
+                                        Automatically exit 61.8% at quick profit, keep 38.2% for higher targets
+                                    </small>
+                                </div>
+                            </div>
+                            
+                            <div class="row mb-3" id="scaling-preview" style="display: none;">
+                                <div class="col-md-12">
+                                    <div class="card bg-light">
+                                        <div class="card-body">
+                                            <h6>Scaling Exit Plan Preview</h6>
+                                            <div id="scaling-plan-details"></div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 

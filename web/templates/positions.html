@@ -24,9 +24,16 @@
 
     <div class="container mt-4">
         <div class="row mb-4">
-            <div class="col-md-12">
+            <div class="col-md-12 d-flex justify-content-between align-items-center">
                 <h1>Active Positions</h1>
-                <button class="btn btn-primary" onclick="refreshPositions()">Refresh</button>
+                <div>
+                    <button class="btn btn-success me-2" onclick="checkAllExits()">
+                        <i class="bi bi-check-circle"></i> Check Exits
+                    </button>
+                    <button class="btn btn-primary" onclick="refreshPositions()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -89,28 +96,123 @@
                 return;
             }
 
-            tbody.innerHTML = positions.map(pos => {
-                const pnl = pos.unrealized_pl || 0;
-                const pnlPercent = pos.unrealized_plpc || 0;
-                const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
-                
-                return `
-                    <tr>
-                        <td><strong>${pos.symbol}</strong></td>
-                        <td>${pos.qty}</td>
-                        <td>$${pos.avg_entry_price.toFixed(4)}</td>
-                        <td>$${pos.current_price.toFixed(4)}</td>
-                        <td>$${(pos.stop_loss || 0).toFixed(4)}</td>
-                        <td>$${(pos.profit_target || 0).toFixed(4)}</td>
-                        <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
-                        <td class="${pnlClass}">${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%</td>
-                        <td>${pos.entry_time || 'N/A'}</td>
-                        <td>
-                            <button class="btn btn-sm btn-danger" onclick="exitPosition('${pos.symbol}', ${pos.qty})">Exit</button>
-                        </td>
-                    </tr>
-                `;
-            }).join('');
+            // Get scaling positions
+            fetch('/api/positions/scaling/all')
+                .then(response => response.json())
+                .then(scalingData => {
+                    const scalingPositions = {};
+                    if (scalingData.positions) {
+                        scalingData.positions.forEach(pos => {
+                            scalingPositions[pos.symbol] = pos;
+                        });
+                    }
+                    
+                    tbody.innerHTML = positions.map(pos => {
+                        const pnl = pos.unrealized_pl || 0;
+                        const pnlPercent = pos.unrealized_plpc || 0;
+                        const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
+                        const scalingInfo = scalingPositions[pos.symbol];
+                        
+                        let scalingBadge = '';
+                        let scalingDetails = '';
+                        if (scalingInfo && scalingInfo.scaling_plan) {
+                            const plan = scalingInfo.scaling_plan;
+                            const quickExit = plan.quick_exit;
+                            const exited = scalingInfo.exits_executed || 0;
+                            scalingBadge = `<span class="badge bg-info ms-1">Scaling (${exited}/${plan.execution_priority.length} exits)</span>`;
+                            
+                            scalingDetails = `
+                                <div class="small text-muted mt-1">
+                                    Quick: ${quickExit.size} @ $${quickExit.price.toFixed(4)} | 
+                                    Remaining: ${scalingInfo.remaining_size} shares
+                                </div>
+                            `;
+                        }
+                        
+                        return `
+                            <tr>
+                                <td>
+                                    <strong>${pos.symbol}</strong>${scalingBadge}
+                                    ${scalingDetails}
+                                </td>
+                                <td>${pos.qty}</td>
+                                <td>$${pos.avg_entry_price.toFixed(4)}</td>
+                                <td>$${pos.current_price.toFixed(4)}</td>
+                                <td>$${(pos.stop_loss || 0).toFixed(4)}</td>
+                                <td>$${(pos.profit_target || 0).toFixed(4)}</td>
+                                <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
+                                <td class="${pnlClass}">${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%</td>
+                                <td>${pos.entry_time || 'N/A'}</td>
+                                <td>
+                                    ${scalingInfo ? `<button class="btn btn-sm btn-info" onclick="viewScalingPlan('${pos.symbol}')">View Plan</button><br>` : ''}
+                                    <button class="btn btn-sm btn-danger mt-1" onclick="exitPosition('${pos.symbol}', ${pos.qty})">Exit</button>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('');
+                })
+                .catch(error => {
+                    console.error('Error loading scaling positions:', error);
+                    // Fallback to basic display
+                    tbody.innerHTML = positions.map(pos => {
+                        const pnl = pos.unrealized_pl || 0;
+                        const pnlPercent = pos.unrealized_plpc || 0;
+                        const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
+                        
+                        return `
+                            <tr>
+                                <td><strong>${pos.symbol}</strong></td>
+                                <td>${pos.qty}</td>
+                                <td>$${pos.avg_entry_price.toFixed(4)}</td>
+                                <td>$${pos.current_price.toFixed(4)}</td>
+                                <td>$${(pos.stop_loss || 0).toFixed(4)}</td>
+                                <td>$${(pos.profit_target || 0).toFixed(4)}</td>
+                                <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
+                                <td class="${pnlClass}">${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%</td>
+                                <td>${pos.entry_time || 'N/A'}</td>
+                                <td>
+                                    <button class="btn btn-sm btn-danger" onclick="exitPosition('${pos.symbol}', ${pos.qty})">Exit</button>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('');
+                });
+        }
+        
+        function viewScalingPlan(symbol) {
+            fetch(`/api/positions/scaling/${symbol}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert('Error: ' + data.error);
+                        return;
+                    }
+                    
+                    const plan = data.scaling_plan;
+                    const quickExit = plan.quick_exit;
+                    const runnerExits = plan.runner_exits;
+                    
+                    let runnerHtml = '';
+                    for (const [key, exit] of Object.entries(runnerExits)) {
+                        runnerHtml += `${key.toUpperCase()}: ${exit.size} shares @ $${exit.price.toFixed(4)} (${exit.target_pct.toFixed(2)}%)\n`;
+                    }
+                    
+                    const details = `Scaling Plan for ${symbol}:\n\n` +
+                        `Total Size: ${data.total_size} shares\n` +
+                        `Remaining: ${data.remaining_size} shares\n` +
+                        `Exits Executed: ${data.exits_executed}\n\n` +
+                        `Quick Exit:\n` +
+                        `  ${quickExit.size} shares @ $${quickExit.price.toFixed(4)} (${quickExit.target_pct.toFixed(2)}% profit)\n\n` +
+                        `Runner Exits:\n${runnerHtml}\n` +
+                        `Stop Loss: $${data.stop_loss.toFixed(4)}\n` +
+                        `Expected Profit: $${plan.expected_profit.total_profit.toFixed(2)}`;
+                    
+                    alert(details);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error loading scaling plan');
+                });
         }
 
         function exitPosition(symbol, qty) {
@@ -139,6 +241,35 @@
             }
         }
 
+        function checkAllExits() {
+            if (!confirm('Check and execute exits for all positions with scaling plans?')) {
+                return;
+            }
+            
+            fetch('/api/positions/scaling/check-exits', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+                
+                if (data.executed_exits && data.executed_exits.length > 0) {
+                    alert(`Executed ${data.executed_exits.length} exit(s) successfully!`);
+                    refreshPositions();
+                } else {
+                    alert('No exits executed at this time.');
+                }
+            })
+            .catch(error => {
+                console.error('Error checking exits:', error);
+                alert('Error checking exits');
+            });
+        }
+        
         // Auto-refresh every 5 seconds
         refreshPositions();
         setInterval(refreshPositions, 5000);

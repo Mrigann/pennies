@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Strategy Configuration - Penny Trading System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">Penny Trading System</a>
+            <div class="navbar-nav flex-row">
+                <a class="nav-link me-3" href="/">Dashboard</a>
+                <a class="nav-link me-3" href="/trade">Trade</a>
+                <a class="nav-link me-3" href="/scanner">Scanner</a>
+                <a class="nav-link me-3" href="/positions">Positions</a>
+                <a class="nav-link me-3" href="/approvals">Approvals</a>
+                <a class="nav-link" href="/analytics">Analytics</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-3">
+        <div class="row mb-3">
+            <div class="col-md-12">
+                <h1>Strategy Configuration</h1>
+                <p class="text-muted" style="font-size: 0.85rem;">Customize Fibonacci ratios and profit targets for scaling exit strategy</p>
+            </div>
+        </div>
+
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header py-2">
+                        <h6 class="mb-0">Fibonacci Exit Ratios</h6>
+                    </div>
+                    <div class="card-body p-compact">
+                        <div class="mb-3">
+                            <label class="form-label">Quick Exit Ratio</label>
+                            <input type="number" class="form-control form-control-sm" id="quick-exit-ratio" 
+                                   step="0.001" min="0" max="1" value="0.618">
+                            <small class="text-muted">Percentage of position to exit quickly (default: 61.8%)</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Runner Ratio</label>
+                            <input type="number" class="form-control form-control-sm" id="runner-ratio" 
+                                   step="0.001" min="0" max="1" value="0.382">
+                            <small class="text-muted">Percentage of position to keep for higher targets (default: 38.2%)</small>
+                        </div>
+                        <div class="alert alert-info py-2" style="font-size: 0.8rem;">
+                            <strong>Note:</strong> Ratios should sum to approximately 1.0 (100%)
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header py-2">
+                        <h6 class="mb-0">Profit Targets (%)</h6>
+                    </div>
+                    <div class="card-body p-compact">
+                        <div class="mb-2">
+                            <label class="form-label">Quick Exit Target</label>
+                            <input type="number" class="form-control form-control-sm" id="profit-quick" 
+                                   step="0.001" min="0" value="0.1">
+                            <small class="text-muted">Target profit % for quick exit</small>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Conservative Target</label>
+                            <input type="number" class="form-control form-control-sm" id="profit-conservative" 
+                                   step="0.001" min="0" value="0.2">
+                            <small class="text-muted">Target profit % for conservative trades</small>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Moderate Target</label>
+                            <input type="number" class="form-control form-control-sm" id="profit-moderate" 
+                                   step="0.001" min="0" value="0.5">
+                            <small class="text-muted">Target profit % for moderate trades</small>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Aggressive Target</label>
+                            <input type="number" class="form-control form-control-sm" id="profit-aggressive" 
+                                   step="0.001" min="0" value="1.0">
+                            <small class="text-muted">Target profit % for aggressive trades</small>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Runner Target</label>
+                            <input type="number" class="form-control form-control-sm" id="profit-runner" 
+                                   step="0.001" min="0" value="2.0">
+                            <small class="text-muted">Target profit % for runner positions</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mb-3">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-body p-compact">
+                        <button class="btn btn-primary btn-sm" onclick="saveConfig()">Save Configuration</button>
+                        <button class="btn btn-secondary btn-sm ms-2" onclick="resetConfig()">Reset to Defaults</button>
+                        <button class="btn btn-info btn-sm ms-2" onclick="loadConfig()">Load Current</button>
+                        <div id="config-message" class="mt-2"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function loadConfig() {
+            fetch('/api/strategy/config')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        showMessage('Error loading config: ' + data.error, 'danger');
+                        return;
+                    }
+                    
+                    document.getElementById('quick-exit-ratio').value = data.quick_exit_ratio;
+                    document.getElementById('runner-ratio').value = data.runner_ratio;
+                    
+                    if (data.profit_targets) {
+                        document.getElementById('profit-quick').value = (data.profit_targets.quick || 0.1) * 100;
+                        document.getElementById('profit-conservative').value = (data.profit_targets.conservative || 0.2) * 100;
+                        document.getElementById('profit-moderate').value = (data.profit_targets.moderate || 0.5) * 100;
+                        document.getElementById('profit-aggressive').value = (data.profit_targets.aggressive || 1.0) * 100;
+                        document.getElementById('profit-runner').value = (data.profit_targets.runner || 2.0) * 100;
+                    }
+                    
+                    showMessage('Configuration loaded successfully', 'success');
+                })
+                .catch(error => {
+                    console.error('Error loading config:', error);
+                    showMessage('Error loading configuration', 'danger');
+                });
+        }
+
+        function saveConfig() {
+            const config = {
+                quick_exit_ratio: parseFloat(document.getElementById('quick-exit-ratio').value),
+                runner_ratio: parseFloat(document.getElementById('runner-ratio').value),
+                profit_targets: {
+                    quick: parseFloat(document.getElementById('profit-quick').value) / 100,
+                    conservative: parseFloat(document.getElementById('profit-conservative').value) / 100,
+                    moderate: parseFloat(document.getElementById('profit-moderate').value) / 100,
+                    aggressive: parseFloat(document.getElementById('profit-aggressive').value) / 100,
+                    runner: parseFloat(document.getElementById('profit-runner').value) / 100
+                }
+            };
+            
+            fetch('/api/strategy/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showMessage('Error saving config: ' + data.error, 'danger');
+                    return;
+                }
+                showMessage('Configuration saved successfully', 'success');
+            })
+            .catch(error => {
+                console.error('Error saving config:', error);
+                showMessage('Error saving configuration', 'danger');
+            });
+        }
+
+        function resetConfig() {
+            document.getElementById('quick-exit-ratio').value = 0.618;
+            document.getElementById('runner-ratio').value = 0.382;
+            document.getElementById('profit-quick').value = 0.1;
+            document.getElementById('profit-conservative').value = 0.2;
+            document.getElementById('profit-moderate').value = 0.5;
+            document.getElementById('profit-aggressive').value = 1.0;
+            document.getElementById('profit-runner').value = 2.0;
+            showMessage('Configuration reset to defaults', 'info');
+        }
+
+        function showMessage(message, type) {
+            const msgDiv = document.getElementById('config-message');
+            msgDiv.className = `alert alert-${type} py-2`;
+            msgDiv.textContent = message;
+            msgDiv.style.display = 'block';
+            setTimeout(() => {
+                msgDiv.style.display = 'none';
+            }, 3000);
+        }
+
+        // Load config on page load
+        loadConfig();
+    </script>
+</body>
+</html>
+

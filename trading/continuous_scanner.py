@@ -11,19 +11,22 @@ from utils.logger import logger
 from utils.data_loader import load_watchlist
 from trading.alpaca_client import AlpacaClient
 from trading.enhanced_strategy import EnhancedStrategy
+from trading.exit_manager import ExitManager
 
 class ContinuousScanner:
     """Continuous scanner that monitors symbols and generates signals."""
     
-    def __init__(self, alpaca_client: AlpacaClient):
+    def __init__(self, alpaca_client: AlpacaClient, exit_manager: ExitManager = None):
         """
         Initialize continuous scanner.
         
         Args:
             alpaca_client: Alpaca client instance
+            exit_manager: Exit manager instance (optional)
         """
         self.client = alpaca_client
         self.strategy = EnhancedStrategy()
+        self.exit_manager = exit_manager
         self.running = False
         self.scan_thread = None
         self.scan_interval = 30  # Scan every 30 seconds
@@ -87,6 +90,25 @@ class ContinuousScanner:
                     logger.debug("Watchlist is empty, skipping scan")
                     time.sleep(self.scan_interval)
                     continue
+                
+                # Check and execute exits for positions with scaling plans
+                if self.exit_manager:
+                    try:
+                        positions = self.exit_manager.get_all_active_positions()
+                        for position in positions:
+                            symbol = position['symbol']
+                            # Get current price
+                            quote = self.client.get_stock_quote_info(symbol)
+                            if quote and quote.get('price'):
+                                current_price = quote.get('price')
+                                # Check and execute exits
+                                exits = self.exit_manager.check_and_execute_exits(symbol, current_price)
+                                if exits:
+                                    logger.info(f"Executed {len(exits)} exits for {symbol}")
+                                # Update trailing stop
+                                self.exit_manager.update_trailing_stop(symbol, current_price)
+                    except Exception as e:
+                        logger.error(f"Error checking exits: {e}")
                 
                 # Scan each symbol
                 for symbol in watchlist:
