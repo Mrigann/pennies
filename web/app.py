@@ -20,6 +20,7 @@ from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 import threading
+from datetime import datetime, timedelta
 from config import settings
 from utils.logger import logger
 
@@ -34,6 +35,8 @@ from trading.risk_manager import RiskManager
 from trading.strategy import TradingStrategy
 from trading.stock_scanner import StockScanner
 from trading.position_tracker import PositionTracker
+from trading.continuous_scanner import ContinuousScanner
+from trading.enhanced_strategy import EnhancedStrategy
 from main import TradingSystem
 from utils.visualizer import (
     generate_daily_pnl_chart,
@@ -52,6 +55,7 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 # Global trading system instance
 trading_system = None
 trading_system_obj = None  # Full TradingSystem object
+continuous_scanner = None  # Continuous scanner instance
 system_lock = threading.Lock()
 
 def get_trading_system():
@@ -106,12 +110,16 @@ def get_trading_system():
                     risk_manager = RiskManager(initial_capital=capital)
                     position_tracker = PositionTracker(client, strategy)
                     
+                    # Create continuous scanner
+                    continuous_scanner_instance = ContinuousScanner(client)
+                    
                     trading_system = {
                         'client': client,
                         'strategy': strategy,
                         'scanner': scanner,
                         'risk_manager': risk_manager,
-                        'position_tracker': position_tracker
+                        'position_tracker': position_tracker,
+                        'continuous_scanner': continuous_scanner_instance
                     }
                     logger.info("Trading system initialized successfully")
                 except Exception as e:
@@ -135,6 +143,26 @@ def get_trading_system_obj():
                     trading_system_obj = None
                     raise
     return trading_system_obj
+
+def get_continuous_scanner():
+    """Get or create continuous scanner instance."""
+    global continuous_scanner
+    if continuous_scanner is None:
+        with system_lock:
+            if continuous_scanner is None:
+                try:
+                    system = get_trading_system()
+                    continuous_scanner = system.get('continuous_scanner')
+                    if not continuous_scanner:
+                        # Create if not exists
+                        continuous_scanner = ContinuousScanner(system['client'])
+                        system['continuous_scanner'] = continuous_scanner
+                    logger.info("Continuous scanner initialized")
+                except Exception as e:
+                    logger.error(f"Failed to initialize continuous scanner: {e}", exc_info=True)
+                    continuous_scanner = None
+                    raise
+    return continuous_scanner
 
 @app.route('/')
 def index():
@@ -571,13 +599,82 @@ def remove_from_watchlist():
 
 @app.route('/api/orders/recent')
 def get_recent_orders():
-    """Get recent orders."""
+    """Get recent orders with filtering and sorting."""
     try:
         system = get_trading_system()
-        orders = system['client'].get_orders(status='all', limit=20)
-        # Sort by submitted_at descending
-        orders.sort(key=lambda x: x.get('submitted_at', ''), reverse=True)
-        return jsonify(orders)
+        
+        # Get filter parameters
+        status_filter = request.args.get('status', 'all')  # all, open, filled, cancelled, etc.
+        limit_filter = request.args.get('limit', None)  # number of orders to return
+        time_filter = request.args.get('time', 'all')  # all, today, 1hour, 24hours
+        sort_by = request.args.get('sort', 'time')  # time, symbol, status, price
+        sort_order = request.args.get('order', 'desc')  # asc, desc
+        
+        # Get all orders
+        orders = system['client'].get_orders(status='all', limit=500)  # Get more to filter
+        
+        # Filter by status
+        if status_filter != 'all':
+            orders = [o for o in orders if o.get('status', '').lower() == status_filter.lower()]
+        
+        # Filter by time
+        if time_filter != 'all':
+            now = datetime.now()
+            cutoff_time = None
+            
+            if time_filter == 'today':
+                cutoff_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            elif time_filter == '1hour':
+                cutoff_time = now - timedelta(hours=1)
+            elif time_filter == '24hours':
+                cutoff_time = now - timedelta(hours=24)
+            elif time_filter == '1week':
+                cutoff_time = now - timedelta(days=7)
+            
+            if cutoff_time:
+                filtered_orders = []
+                for order in orders:
+                    submitted_at = order.get('submitted_at')
+                    if submitted_at:
+                        try:
+                            order_time = datetime.fromisoformat(submitted_at.replace('Z', '+00:00'))
+                            if order_time.replace(tzinfo=None) >= cutoff_time:
+                                filtered_orders.append(order)
+                        except:
+                            pass
+                orders = filtered_orders
+        
+        # Sort orders
+        if sort_by == 'time':
+            orders.sort(key=lambda x: x.get('submitted_at', ''), reverse=(sort_order == 'desc'))
+        elif sort_by == 'symbol':
+            orders.sort(key=lambda x: x.get('symbol', '').upper(), reverse=(sort_order == 'desc'))
+        elif sort_by == 'status':
+            orders.sort(key=lambda x: x.get('status', ''), reverse=(sort_order == 'desc'))
+        elif sort_by == 'price':
+            orders.sort(key=lambda x: float(x.get('filled_avg_price', 0) or 0), reverse=(sort_order == 'desc'))
+        elif sort_by == 'qty':
+            orders.sort(key=lambda x: float(x.get('qty', 0) or 0), reverse=(sort_order == 'desc'))
+        
+        # Apply limit
+        if limit_filter:
+            try:
+                limit = int(limit_filter)
+                orders = orders[:limit]
+            except:
+                pass
+        
+        return jsonify({
+            'orders': orders,
+            'count': len(orders),
+            'filters': {
+                'status': status_filter,
+                'time': time_filter,
+                'limit': limit_filter,
+                'sort': sort_by,
+                'order': sort_order
+            }
+        })
     except Exception as e:
         logger.error(f"Error getting recent orders: {e}")
         return jsonify({"error": str(e)}), 500
@@ -692,6 +789,88 @@ def stop_system():
         return jsonify({'success': True, 'message': 'Trading system stopped'})
     except Exception as e:
         logger.error(f"Error stopping system: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scanner/signals')
+def get_scanner_signals():
+    """Get latest signals from continuous scanner."""
+    try:
+        scanner = get_continuous_scanner()
+        signals = scanner.get_latest_signals()
+        return jsonify({
+            'signals': signals,
+            'count': len(signals),
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error getting scanner signals: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scanner/signal/<symbol>')
+def get_symbol_signal(symbol):
+    """Get latest signal for a specific symbol."""
+    try:
+        scanner = get_continuous_scanner()
+        signal = scanner.get_symbol_signal(symbol.upper())
+        if signal:
+            return jsonify(signal)
+        else:
+            # Scan symbol now if not in cache
+            signal = scanner.scan_symbol_now(symbol.upper())
+            if signal:
+                return jsonify(signal)
+            return jsonify({"error": "No signal available for symbol"}), 404
+    except Exception as e:
+        logger.error(f"Error getting signal for {symbol}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scanner/start', methods=['POST'])
+def start_scanner():
+    """Start continuous scanner."""
+    try:
+        scanner = get_continuous_scanner()
+        scanner.start()
+        return jsonify({'success': True, 'message': 'Continuous scanner started'})
+    except Exception as e:
+        logger.error(f"Error starting scanner: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scanner/stop', methods=['POST'])
+def stop_scanner():
+    """Stop continuous scanner."""
+    try:
+        scanner = get_continuous_scanner()
+        scanner.stop()
+        return jsonify({'success': True, 'message': 'Continuous scanner stopped'})
+    except Exception as e:
+        logger.error(f"Error stopping scanner: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scanner/status')
+def get_scanner_status():
+    """Get continuous scanner status."""
+    try:
+        scanner = get_continuous_scanner()
+        return jsonify({
+            'running': scanner.running,
+            'signals_count': len(scanner.get_latest_signals()),
+            'scan_interval': scanner.scan_interval
+        })
+    except Exception as e:
+        logger.error(f"Error getting scanner status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scanner/scan/<symbol>', methods=['POST'])
+def scan_symbol_now(symbol):
+    """Scan a symbol immediately."""
+    try:
+        scanner = get_continuous_scanner()
+        signal = scanner.scan_symbol_now(symbol.upper())
+        if signal:
+            return jsonify(signal)
+        return jsonify({"error": "Failed to generate signal"}), 500
+    except Exception as e:
+        logger.error(f"Error scanning {symbol}: {e}")
         return jsonify({"error": str(e)}), 500
 
 @socketio.on('connect')

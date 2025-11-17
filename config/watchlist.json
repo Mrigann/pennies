@@ -1,8 +1,13 @@
 {
   "symbols": [
     "AAPL",
-    "BAC"
+    "BAC",
+    "PFE",
+    "RIVN",
+    "SOFI",
+    "F",
+    "PLTR"
   ],
-  "last_updated": "2025-11-16T13:15:10.493508",
+  "last_updated": "2025-11-16T20:26:16.813644",
   "notes": "Add stock symbols to track for daily trading"
 }

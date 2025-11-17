@@ -3,7 +3,7 @@ Risk management module for enforcing trading limits and position sizing.
 Implements daily loss limits, position sizing, and trading permission logic.
 """
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 from config import settings
 from utils.logger import logger
 from utils.data_loader import get_previous_day_pnl
@@ -239,4 +239,86 @@ class RiskManager:
         self._initialize_daily_limits()
         self.daily_pnl = 0.0
         logger.info("Risk manager reset for new trading day")
+    
+    def calculate_trailing_stop(
+        self,
+        entry_price: float,
+        current_price: float,
+        initial_stop_loss: float,
+        trailing_percent: float = 0.01
+    ) -> float:
+        """
+        Calculate trailing stop loss price.
+        
+        Args:
+            entry_price: Original entry price
+            current_price: Current market price
+            initial_stop_loss: Initial stop loss price
+            trailing_percent: Trailing stop percentage (default 1%)
+        
+        Returns:
+            Updated trailing stop loss price
+        """
+        # If price has moved against us, use initial stop
+        if current_price < entry_price:
+            return initial_stop_loss
+        
+        # Calculate trailing stop based on current price
+        trailing_stop = current_price * (1 - trailing_percent)
+        
+        # Trailing stop should never go below initial stop loss
+        return max(trailing_stop, initial_stop_loss)
+    
+    def check_trailing_stop(
+        self,
+        current_price: float,
+        trailing_stop: float
+    ) -> Tuple[bool, str]:
+        """
+        Check if trailing stop has been hit.
+        
+        Args:
+            current_price: Current market price
+            trailing_stop: Trailing stop loss price
+        
+        Returns:
+            Tuple of (should_exit, reason)
+        """
+        if current_price <= trailing_stop:
+            return True, f"Trailing stop hit at ${trailing_stop:.4f}"
+        return False, ""
+    
+    def calculate_stop_loss_with_safety(
+        self,
+        entry_price: float,
+        stop_loss_percent: float = None,
+        max_loss_percent: float = 0.01
+    ) -> Dict[str, float]:
+        """
+        Calculate stop loss with safety limits.
+        
+        Args:
+            entry_price: Entry price
+            stop_loss_percent: Stop loss percentage (defaults to settings)
+            max_loss_percent: Maximum loss percentage (default 1%)
+        
+        Returns:
+            Dictionary with stop_loss, trailing_stop, and loss_limit
+        """
+        stop_loss_pct = stop_loss_percent or settings.STOP_LOSS_PERCENT
+        
+        # Ensure stop loss doesn't exceed max loss
+        stop_loss_pct = min(stop_loss_pct, max_loss_percent)
+        
+        stop_loss = entry_price * (1 - stop_loss_pct)
+        loss_limit = entry_price * (1 - max_loss_percent)
+        
+        return {
+            'stop_loss': stop_loss,
+            'stop_loss_percent': stop_loss_pct * 100,
+            'trailing_stop': stop_loss,  # Initial trailing stop = stop loss
+            'trailing_percent': 0.01,  # 1% trailing
+            'loss_limit': loss_limit,
+            'max_loss_percent': max_loss_percent * 100
+        }
 

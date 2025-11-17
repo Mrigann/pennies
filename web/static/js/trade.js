@@ -344,36 +344,137 @@ function loadAccountInfo() {
         });
 }
 
+// Filter state
+let currentFilters = {
+    status: 'all',
+    time: 'all',
+    limit: '',
+    sort: 'time',
+    order: 'desc'
+};
+
+function toggleFilters() {
+    const filterControls = document.getElementById('filter-controls');
+    filterControls.style.display = filterControls.style.display === 'none' ? 'block' : 'none';
+}
+
+function applyFilters() {
+    // Get filter values
+    currentFilters.status = document.getElementById('filter-status').value;
+    currentFilters.time = document.getElementById('filter-time').value;
+    currentFilters.limit = document.getElementById('filter-limit').value;
+    currentFilters.sort = document.getElementById('filter-sort').value;
+    currentFilters.order = document.getElementById('filter-order').value;
+    
+    loadRecentTrades();
+}
+
+function resetFilters() {
+    document.getElementById('filter-status').value = 'all';
+    document.getElementById('filter-time').value = 'all';
+    document.getElementById('filter-limit').value = '';
+    document.getElementById('filter-sort').value = 'time';
+    document.getElementById('filter-order').value = 'desc';
+    
+    currentFilters = {
+        status: 'all',
+        time: 'all',
+        limit: '',
+        sort: 'time',
+        order: 'desc'
+    };
+    
+    loadRecentTrades();
+}
+
+function sortBy(column) {
+    const currentSort = document.getElementById('filter-sort').value;
+    const currentOrder = document.getElementById('filter-order').value;
+    
+    if (currentSort === column) {
+        // Toggle order
+        document.getElementById('filter-order').value = currentOrder === 'desc' ? 'asc' : 'desc';
+    } else {
+        // Change sort column
+        document.getElementById('filter-sort').value = column;
+        document.getElementById('filter-order').value = 'desc';
+    }
+    
+    applyFilters();
+}
+
 function loadRecentTrades() {
-    fetch('/api/orders/recent')
+    // Build query string
+    const params = new URLSearchParams();
+    if (currentFilters.status !== 'all') params.append('status', currentFilters.status);
+    if (currentFilters.time !== 'all') params.append('time', currentFilters.time);
+    if (currentFilters.limit) params.append('limit', currentFilters.limit);
+    if (currentFilters.sort) params.append('sort', currentFilters.sort);
+    if (currentFilters.order) params.append('order', currentFilters.order);
+    
+    const url = '/api/orders/recent' + (params.toString() ? '?' + params.toString() : '');
+    
+    fetch(url)
         .then(response => response.json())
-        .then(orders => {
+        .then(data => {
             const tbody = document.getElementById('recent-trades');
+            const orders = data.orders || [];
+            
+            // Update filter count
+            const filterCount = document.getElementById('filter-count');
+            if (filterCount) {
+                filterCount.textContent = `Showing ${orders.length} order${orders.length !== 1 ? 's' : ''}`;
+            }
             
             if (!orders || orders.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No recent trades</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No orders found</td></tr>';
                 return;
             }
             
-            tbody.innerHTML = orders.slice(0, 10).map(order => {
-                const time = order.submitted_at ? new Date(order.submitted_at).toLocaleTimeString() : 'N/A';
-                const statusClass = order.status === 'filled' ? 'success' : 
-                                  order.status === 'pending' ? 'warning' : 'secondary';
+            tbody.innerHTML = orders.map(order => {
+                const submittedAt = order.submitted_at || '';
+                let timeDisplay = 'N/A';
+                let dateDisplay = '';
+                
+                if (submittedAt) {
+                    try {
+                        const date = new Date(submittedAt);
+                        timeDisplay = date.toLocaleTimeString();
+                        dateDisplay = date.toLocaleDateString();
+                    } catch (e) {
+                        timeDisplay = submittedAt;
+                    }
+                }
+                
+                const status = (order.status || '').toLowerCase();
+                let statusClass = 'secondary';
+                if (status === 'filled') statusClass = 'success';
+                else if (status === 'open' || status === 'pending') statusClass = 'warning';
+                else if (status === 'cancelled') statusClass = 'danger';
+                else if (status === 'partially_filled') statusClass = 'info';
+                
+                const price = order.filled_avg_price || order.limit_price || order.stop_price || 0;
+                const side = (order.side || '').toLowerCase();
                 
                 return `
                     <tr>
-                        <td>${time}</td>
-                        <td><strong>${order.symbol}</strong></td>
-                        <td><span class="badge bg-${order.side === 'buy' ? 'success' : 'danger'}">${order.side.toUpperCase()}</span></td>
-                        <td>${order.qty}</td>
-                        <td>$${(order.filled_avg_price || 0).toFixed(4)}</td>
-                        <td><span class="badge bg-${statusClass}">${order.status}</span></td>
+                        <td>
+                            <div class="small">${timeDisplay}</div>
+                            <div class="text-muted" style="font-size: 0.75rem;">${dateDisplay}</div>
+                        </td>
+                        <td><strong>${order.symbol || 'N/A'}</strong></td>
+                        <td><span class="badge bg-${side === 'buy' ? 'success' : 'danger'}">${(side || '').toUpperCase()}</span></td>
+                        <td>${order.qty || 0}</td>
+                        <td>$${parseFloat(price).toFixed(4)}</td>
+                        <td><span class="badge bg-${statusClass}">${(order.status || '').toUpperCase()}</span></td>
                     </tr>
                 `;
             }).join('');
         })
         .catch(error => {
             console.error('Error loading recent trades:', error);
+            const tbody = document.getElementById('recent-trades');
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Error loading orders</td></tr>';
         });
 }
 
