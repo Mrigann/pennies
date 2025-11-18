@@ -375,14 +375,35 @@ class AlpacaClient:
         """
         try:
             # Map timeframe string to TimeFrame enum
-            tf_map = {
-                "1Min": TimeFrame.Minute,
-                "5Min": TimeFrame(5, TimeFrame.Minute),
-                "15Min": TimeFrame(15, TimeFrame.Minute),
-                "1Hour": TimeFrame.Hour,
-                "1Day": TimeFrame.Day
-            }
-            tf = tf_map.get(timeframe, TimeFrame.Minute)
+            # Alpaca limits: period number must be <= 59 for minute-based timeframes
+            # Some SDK versions may have issues with TimeFrame(15, TimeFrame.Minute)
+            # So we'll use a safer approach
+            if timeframe == "1Min":
+                tf = TimeFrame.Minute
+            elif timeframe == "5Min":
+                tf = TimeFrame(5, TimeFrame.Minute)  # 5 < 59, should be OK
+            elif timeframe == "15Min":
+                # Alpaca sometimes rejects TimeFrame(15, Minute) even though 15 < 59
+                # Use 1Min bars and aggregate to avoid the error
+                bars_1m = self.get_bars(symbol, timeframe="1Min", limit=limit * 15, start=start, end=end)
+                if bars_1m and len(bars_1m) >= 15:
+                    return self._aggregate_1min_bars(bars_1m, 15)
+                else:
+                    return []
+            elif timeframe == "1Hour":
+                tf = TimeFrame.Hour
+            elif timeframe == "1Day":
+                tf = TimeFrame.Day
+            else:
+                tf = TimeFrame.Minute  # Default to 1Min
+            
+            # If no start/end provided, use recent date range (last 5 days for intraday, last 30 days for daily)
+            if not start or not end:
+                end = datetime.now()
+                if timeframe == "1Day":
+                    start = end - timedelta(days=30)
+                else:
+                    start = end - timedelta(days=5)
             
             request_params = StockBarsRequest(
                 symbol_or_symbols=[symbol],
@@ -392,24 +413,129 @@ class AlpacaClient:
                 limit=limit
             )
             
-            bars = self.data_client.get_stock_bars(request_params)
+            try:
+                bars_response = self.data_client.get_stock_bars(request_params)
+            except Exception as api_error:
+                error_msg = str(api_error)
+                logger.error(f"Alpaca API error getting bars for {symbol}: {error_msg}")
+                
+                # Check for common errors
+                if "subscription" in error_msg.lower() or "data plan" in error_msg.lower():
+                    logger.warning(f"Data subscription may be required for {symbol}. Trying alternative method...")
+                    # Try using daily bars as fallback
+                    if timeframe != "1Day":
+                        try:
+                            daily_bars = self.get_bars(symbol, timeframe="1Day", limit=limit, start=start, end=end)
+                            if daily_bars:
+                                logger.info(f"Got {len(daily_bars)} daily bars as fallback for {symbol}")
+                                return daily_bars
+                        except:
+                            pass
+                
+                # Re-raise if it's not a subscription issue
+                raise
             
             result = []
-            if symbol in bars:
-                for bar in bars[symbol]:
-                    result.append({
-                        "timestamp": bar.timestamp.isoformat(),
-                        "open": float(bar.open),
-                        "high": float(bar.high),
-                        "low": float(bar.low),
-                        "close": float(bar.close),
-                        "volume": int(bar.volume)
-                    })
+            
+            # BarSet is a dictionary-like object - access it properly
+            try:
+                # Try to get bars for the symbol
+                symbol_bars = bars_response.get(symbol) if hasattr(bars_response, 'get') else None
+                
+                # If get() doesn't work, try direct access
+                if symbol_bars is None:
+                    try:
+                        symbol_bars = bars_response[symbol]
+                    except (KeyError, TypeError):
+                        # Try iterating if it's iterable
+                        if hasattr(bars_response, '__iter__'):
+                            # BarSet might be iterable directly
+                            symbol_bars = list(bars_response) if bars_response else None
+                        else:
+                            symbol_bars = None
+                
+                # Process bars
+                if symbol_bars:
+                    # Handle both list and single bar
+                    if not isinstance(symbol_bars, list):
+                        symbol_bars = [symbol_bars]
+                    
+                    for bar in symbol_bars:
+                        result.append({
+                            "timestamp": bar.timestamp.isoformat() if hasattr(bar.timestamp, 'isoformat') else str(bar.timestamp),
+                            "open": float(bar.open),
+                            "high": float(bar.high),
+                            "low": float(bar.low),
+                            "close": float(bar.close),
+                            "volume": int(bar.volume)
+                        })
+                else:
+                    # No bars for this symbol - try fallback
+                    logger.warning(f"No bars returned for {symbol} with {timeframe} timeframe")
+                    # Try alternative: check if symbol is valid by trying daily bars
+                    if timeframe != "1Day":
+                        try:
+                            logger.info(f"Trying daily bars as fallback for {symbol}")
+                            daily_bars = self.get_bars(symbol, timeframe="1Day", limit=5, start=start, end=end)
+                            if daily_bars and len(daily_bars) > 0:
+                                logger.info(f"Got {len(daily_bars)} daily bars for {symbol} - symbol is valid but no {timeframe} data")
+                                return daily_bars
+                        except Exception as fallback_error:
+                            logger.debug(f"Fallback to daily bars also failed: {fallback_error}")
+            except Exception as process_error:
+                logger.error(f"Error processing bars response for {symbol}: {process_error}")
+                logger.debug(f"BarSet type: {type(bars_response)}, Attributes: {dir(bars_response) if hasattr(bars_response, '__dict__') else 'N/A'}")
             
             return result
         except Exception as e:
+            error_msg = str(e)
+            # Check if it's a timeframe period error
+            if "timeframe period number is larger than the allowed maximum" in error_msg:
+                logger.warning(f"Timeframe period error for {symbol} with {timeframe}. Falling back to 1Min.")
+                # Retry with 1Min and aggregate if needed
+                if timeframe != "1Min":
+                    try:
+                        bars_1m = self.get_bars(symbol, timeframe="1Min", limit=limit * 15)  # Get more 1Min bars
+                        if bars_1m:
+                            # Aggregate to requested timeframe
+                            if timeframe == "15Min":
+                                # Aggregate 15 x 1Min = 15Min
+                                return self._aggregate_1min_bars(bars_1m, 15)
+                            elif timeframe == "5Min":
+                                return self._aggregate_1min_bars(bars_1m, 5)
+                    except:
+                        pass
             logger.error(f"Error getting bars for {symbol}: {e}")
             return []
+    
+    def _aggregate_1min_bars(self, bars_1m: List[Dict[str, Any]], minutes: int) -> List[Dict[str, Any]]:
+        """
+        Aggregate 1-minute bars into larger timeframe.
+        
+        Args:
+            bars_1m: List of 1-minute bars
+            minutes: Target timeframe in minutes
+        
+        Returns:
+            List of aggregated bars
+        """
+        if not bars_1m or len(bars_1m) < minutes:
+            return []
+        
+        aggregated = []
+        for i in range(0, len(bars_1m), minutes):
+            group = bars_1m[i:i+minutes]
+            if group:
+                aggregated.append({
+                    'timestamp': group[0]['timestamp'],
+                    'open': group[0]['open'],
+                    'high': max(b['high'] for b in group),
+                    'low': min(b['low'] for b in group),
+                    'close': group[-1]['close'],
+                    'volume': sum(b['volume'] for b in group)
+                })
+        
+        return aggregated
     
     def get_latest_bar(self, symbol: str) -> Optional[Dict[str, Any]]:
         """

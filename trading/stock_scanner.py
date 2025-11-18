@@ -81,12 +81,13 @@ class StockScanner:
         logger.warning("Market scanning requires symbol list - use watchlist for now")
         return []
     
-    def _analyze_stock(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def _analyze_stock(self, symbol: str, include_rejected: bool = False) -> Optional[Dict[str, Any]]:
         """
         Analyze a single stock for scalping potential.
         
         Args:
             symbol: Stock symbol
+            include_rejected: If True, return analysis even if it doesn't meet criteria
         
         Returns:
             Dictionary with analysis results or None
@@ -99,7 +100,17 @@ class StockScanner:
                 limit=settings.LOOKBACK_PERIOD + 10
             )
             
+            rejection_reasons = []
+            
             if not bars or len(bars) < settings.LOOKBACK_PERIOD:
+                if include_rejected:
+                    return {
+                        "symbol": symbol,
+                        "status": "rejected",
+                        "rejection_reasons": ["Insufficient data: Need at least {} bars, got {}".format(settings.LOOKBACK_PERIOD, len(bars) if bars else 0)],
+                        "bars_count": len(bars) if bars else 0,
+                        "required_bars": settings.LOOKBACK_PERIOD
+                    }
                 return None
             
             # Convert to DataFrame
@@ -112,8 +123,13 @@ class StockScanner:
             current_price = latest['close']
             
             # Check price range
-            if not (settings.MIN_STOCK_PRICE <= current_price <= settings.MAX_STOCK_PRICE):
-                return None
+            price_in_range = settings.MIN_STOCK_PRICE <= current_price <= settings.MAX_STOCK_PRICE
+            if not price_in_range:
+                rejection_reasons.append(
+                    "Price out of range: ${:.4f} (Required: ${:.2f} - ${:.2f})".format(
+                        current_price, settings.MIN_STOCK_PRICE, settings.MAX_STOCK_PRICE
+                    )
+                )
             
             # Calculate metrics
             volume_ratio = self._calculate_volume_ratio(df)
@@ -127,26 +143,123 @@ class StockScanner:
                 momentum_score * 0.2
             )
             
-            # Filter by minimum thresholds
-            if volume_ratio < settings.SCANNER_MIN_VOLUME_MULTIPLIER:
-                return None
+            # Check volume threshold
+            volume_passed = volume_ratio >= settings.SCANNER_MIN_VOLUME_MULTIPLIER
+            if not volume_passed:
+                rejection_reasons.append(
+                    "Volume too low: {:.2f}x (Required: {:.2f}x minimum)".format(
+                        volume_ratio, settings.SCANNER_MIN_VOLUME_MULTIPLIER
+                    )
+                )
             
-            if volatility_score < settings.SCANNER_MIN_VOLATILITY_PERCENT:
-                return None
+            # Check volatility threshold
+            volatility_passed = volatility_score >= settings.SCANNER_MIN_VOLATILITY_PERCENT
+            if not volatility_passed:
+                rejection_reasons.append(
+                    "Volatility too low: {:.2f}% (Required: {:.2f}% minimum)".format(
+                        volatility_score, settings.SCANNER_MIN_VOLATILITY_PERCENT
+                    )
+                )
             
-            return {
+            # Calculate additional metrics for diagnostics
+            avg_volume = df['volume'].rolling(window=20).mean().iloc[-1] if len(df) >= 20 else df['volume'].mean()
+            current_volume = latest['volume']
+            price_change_20 = ((current_price - df.iloc[-20]['close']) / df.iloc[-20]['close']) * 100 if len(df) >= 20 else 0
+            
+            # Calculate all technical indicators using EnhancedStrategy
+            from trading.enhanced_strategy import EnhancedStrategy
+            strategy = EnhancedStrategy()
+            df_indicators = strategy.calculate_indicators(bars, "1Min")
+            
+            # Extract latest indicator values
+            indicators = {}
+            if not df_indicators.empty and len(df_indicators) > 0:
+                latest_indicators = df_indicators.iloc[-1]
+                indicators = {
+                    "rsi": float(latest_indicators.get('rsi', 0)) if pd.notna(latest_indicators.get('rsi')) else None,
+                    "msi": float(latest_indicators.get('msi', 0)) if pd.notna(latest_indicators.get('msi')) else None,
+                    "macd": float(latest_indicators.get('macd', 0)) if pd.notna(latest_indicators.get('macd')) else None,
+                    "macd_signal": float(latest_indicators.get('macd_signal', 0)) if pd.notna(latest_indicators.get('macd_signal')) else None,
+                    "macd_hist": float(latest_indicators.get('macd_hist', 0)) if pd.notna(latest_indicators.get('macd_hist')) else None,
+                    "sma_20": float(latest_indicators.get('sma_20', 0)) if pd.notna(latest_indicators.get('sma_20')) else None,
+                    "sma_50": float(latest_indicators.get('sma_50', 0)) if pd.notna(latest_indicators.get('sma_50')) else None,
+                    "ema_12": float(latest_indicators.get('ema_12', 0)) if pd.notna(latest_indicators.get('ema_12')) else None,
+                    "ema_26": float(latest_indicators.get('ema_26', 0)) if pd.notna(latest_indicators.get('ema_26')) else None,
+                    "atr": float(latest_indicators.get('atr', 0)) if pd.notna(latest_indicators.get('atr')) else None,
+                    "atr_percent": float(latest_indicators.get('atr_percent', 0)) if pd.notna(latest_indicators.get('atr_percent')) else None,
+                    "bb_upper": float(latest_indicators.get('bb_upper', 0)) if pd.notna(latest_indicators.get('bb_upper')) else None,
+                    "bb_middle": float(latest_indicators.get('bb_middle', 0)) if pd.notna(latest_indicators.get('bb_middle')) else None,
+                    "bb_lower": float(latest_indicators.get('bb_lower', 0)) if pd.notna(latest_indicators.get('bb_lower')) else None,
+                    "high_20": float(latest_indicators.get('high_20', 0)) if pd.notna(latest_indicators.get('high_20')) else None,
+                    "low_20": float(latest_indicators.get('low_20', 0)) if pd.notna(latest_indicators.get('low_20')) else None,
+                    "momentum_3": float(latest_indicators.get('momentum_3', 0)) if pd.notna(latest_indicators.get('momentum_3')) else None,
+                    "momentum_5": float(latest_indicators.get('momentum_5', 0)) if pd.notna(latest_indicators.get('momentum_5')) else None,
+                    "volume_ratio_ind": float(latest_indicators.get('volume_ratio', 1.0)) if pd.notna(latest_indicators.get('volume_ratio')) else 1.0
+                }
+            
+            # Get historical indicator data for charts (last 50 bars)
+            indicator_history = []
+            if not df_indicators.empty and len(df_indicators) > 0:
+                for idx, row in df_indicators.tail(50).iterrows():
+                    indicator_history.append({
+                        "timestamp": idx.isoformat() if hasattr(idx, 'isoformat') else str(idx),
+                        "rsi": float(row.get('rsi', 0)) if pd.notna(row.get('rsi')) else None,
+                        "msi": float(row.get('msi', 0)) if pd.notna(row.get('msi')) else None,
+                        "macd": float(row.get('macd', 0)) if pd.notna(row.get('macd')) else None,
+                        "macd_signal": float(row.get('macd_signal', 0)) if pd.notna(row.get('macd_signal')) else None,
+                        "macd_hist": float(row.get('macd_hist', 0)) if pd.notna(row.get('macd_hist')) else None,
+                        "sma_20": float(row.get('sma_20', 0)) if pd.notna(row.get('sma_20')) else None,
+                        "ema_12": float(row.get('ema_12', 0)) if pd.notna(row.get('ema_12')) else None,
+                        "ema_26": float(row.get('ema_26', 0)) if pd.notna(row.get('ema_26')) else None,
+                        "close": float(row.get('close', 0)),
+                        "volume": float(row.get('volume', 0))
+                    })
+            
+            result = {
                 "symbol": symbol,
-                "current_price": current_price,
-                "volume_ratio": volume_ratio,
-                "volatility_score": volatility_score,
-                "momentum_score": momentum_score,
-                "scalping_score": scalping_score,
+                "status": "opportunity" if not rejection_reasons else "rejected",
+                "current_price": float(current_price),
+                "volume_ratio": float(volume_ratio),
+                "volatility_score": float(volatility_score),
+                "momentum_score": float(momentum_score),
+                "scalping_score": float(scalping_score),
                 "volume": int(latest['volume']),
-                "price_change_pct": ((current_price - df.iloc[-20]['close']) / df.iloc[-20]['close']) * 100 if len(df) >= 20 else 0,
+                "avg_volume": float(avg_volume),
+                "price_change_pct": float(price_change_20),
+                "indicators": indicators,
+                "indicator_history": indicator_history,
+                "rejection_reasons": rejection_reasons,
+                "criteria": {
+                    "price_in_range": bool(price_in_range),
+                    "volume_passed": bool(volume_passed),
+                    "volatility_passed": bool(volatility_passed),
+                    "min_price": float(settings.MIN_STOCK_PRICE),
+                    "max_price": float(settings.MAX_STOCK_PRICE),
+                    "min_volume_multiplier": float(settings.SCANNER_MIN_VOLUME_MULTIPLIER),
+                    "min_volatility_percent": float(settings.SCANNER_MIN_VOLATILITY_PERCENT)
+                },
+                "bars_data": {
+                    "count": int(len(bars)),
+                    "required": int(settings.LOOKBACK_PERIOD),
+                    "sufficient": bool(len(bars) >= settings.LOOKBACK_PERIOD)
+                },
                 "timestamp": datetime.now().isoformat()
             }
+            
+            # Return None if rejected and include_rejected is False
+            if rejection_reasons and not include_rejected:
+                return None
+            
+            return result
         except Exception as e:
             logger.error(f"Error analyzing {symbol}: {e}")
+            if include_rejected:
+                return {
+                    "symbol": symbol,
+                    "status": "error",
+                    "rejection_reasons": [f"Error during analysis: {str(e)}"],
+                    "error": str(e)
+                }
             return None
     
     def _calculate_volume_ratio(self, df: pd.DataFrame, period: int = 20) -> float:

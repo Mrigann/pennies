@@ -14,16 +14,18 @@ from trading.strategy import TradingStrategy
 class PositionTracker:
     """Tracks positions and manages exits."""
     
-    def __init__(self, alpaca_client: AlpacaClient, strategy: TradingStrategy):
+    def __init__(self, alpaca_client: AlpacaClient, strategy: TradingStrategy, performance_analytics=None):
         """
         Initialize position tracker.
         
         Args:
             alpaca_client: Alpaca client instance
             strategy: Trading strategy instance
+            performance_analytics: Performance analytics instance (optional)
         """
         self.client = alpaca_client
         self.strategy = strategy
+        self.performance_analytics = performance_analytics
         self.positions = {}  # symbol -> position dict
         self.daily_trades = []
     
@@ -169,6 +171,29 @@ class PositionTracker:
             
             # Save to history
             self._save_trade_to_history(trade_record)
+            
+            # Record to performance analytics if available
+            if self.performance_analytics:
+                try:
+                    from datetime import datetime
+                    entry_time = position['entry_time']
+                    if isinstance(entry_time, str):
+                        entry_time = datetime.fromisoformat(entry_time)
+                    exit_time = datetime.now()
+                    
+                    self.performance_analytics.record_trade(
+                        symbol=symbol,
+                        entry_price=entry_price,
+                        exit_price=exit_price,
+                        quantity=int(qty),
+                        entry_time=entry_time,
+                        exit_time=exit_time,
+                        pnl=pnl,
+                        pnl_percent=pnl_percent,
+                        exit_reason=reason
+                    )
+                except Exception as e:
+                    logger.error(f"Error recording trade to analytics: {e}")
         else:
             logger.error(f"Failed to exit position {symbol}")
     

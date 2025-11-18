@@ -20,6 +20,8 @@ from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 import threading
+import numpy as np
+import pandas as pd
 from datetime import datetime, timedelta
 from config import settings
 from utils.logger import logger
@@ -113,12 +115,14 @@ def get_trading_system():
                     
                     capital = float(account.get('portfolio_value', config.settings.STARTING_CAPITAL)) if account else config.settings.STARTING_CAPITAL
                     risk_manager = RiskManager(initial_capital=capital)
-                    position_tracker = PositionTracker(client, strategy)
                     
-                    # Create scaling strategy and exit manager first
+                    # Create performance analytics first (needed by position tracker)
+                    performance_analytics = PerformanceAnalytics()
+                    position_tracker = PositionTracker(client, strategy, performance_analytics=performance_analytics)
+                    
+                    # Create scaling strategy and exit manager
                     scaling_strategy = ScalingStrategy()
                     exit_manager = ExitManager(client)
-                    performance_analytics = PerformanceAnalytics()
                     backtester = Backtester(client)
                     notification_manager = NotificationManager()
                     
@@ -200,6 +204,11 @@ def positions():
 def analytics():
     """Analytics page."""
     return render_template('analytics.html')
+
+@app.route('/orders')
+def orders():
+    """Orders and trades history page."""
+    return render_template('orders.html')
 
 @app.route('/strategy-config')
 def strategy_config():
@@ -336,18 +345,100 @@ def run_scanner():
             "errors": errors
         })
     except Exception as e:
-        logger.error(f"Error running scanner: {e}", exc_info=True)
-        return jsonify({
-            "error": str(e),
-            "opportunities": [],
-            "scanned": [],
-            "stats": {
-                "total_scanned": 0,
-                "opportunities_found": 0,
-                "filtered_out": 0,
-                "errors": 1
-            }
-        }), 500
+        logger.error(f"Error running scanner: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scanner/diagnostic/<symbol>')
+def get_symbol_diagnostic(symbol):
+    """Get detailed diagnostic analysis for a specific symbol."""
+    try:
+        system = get_trading_system()
+        scanner = system.get('scanner')
+        
+        if not scanner:
+            return jsonify({"error": "Scanner not available"}), 500
+        
+        # Get detailed analysis
+        analysis = scanner._analyze_stock(symbol, include_rejected=True)
+        
+        if not analysis:
+            return jsonify({
+                "symbol": symbol,
+                "status": "error",
+                "error": "Unable to analyze symbol"
+            }), 404
+        
+        # Get additional data for charts - try multiple timeframes
+        chart_data = {
+            "prices": [],
+            "volumes": [],
+            "timestamps": []
+        }
+        
+        # Try 1Min first, then fallback to 5Min, 1Hour, or 1Day
+        bars = None
+        for tf in ["1Min", "5Min", "1Hour", "1Day"]:
+            try:
+                bars = scanner.client.get_bars(symbol, timeframe=tf, limit=100)
+                if bars and len(bars) > 0:
+                    logger.info(f"Got {len(bars)} bars for {symbol} using {tf} timeframe")
+                    break
+            except Exception as e:
+                logger.debug(f"Failed to get {tf} bars for {symbol}: {e}")
+                continue
+        
+        if bars and len(bars) > 0:
+            for bar in bars[-50:]:  # Last 50 bars
+                chart_data["prices"].append({
+                    "time": bar['timestamp'],
+                    "open": bar['open'],
+                    "high": bar['high'],
+                    "low": bar['low'],
+                    "close": bar['close']
+                })
+                chart_data["volumes"].append({
+                    "time": bar['timestamp'],
+                    "volume": bar['volume']
+                })
+                chart_data["timestamps"].append(bar['timestamp'])
+        else:
+            logger.warning(f"No chart data available for {symbol} - may require data subscription")
+        
+        analysis['chart_data'] = chart_data
+        analysis['data_available'] = bool(len(chart_data['prices']) > 0)
+        
+        # Ensure all values are JSON serializable (convert numpy/pandas types)
+        def make_json_serializable(obj):
+            """Recursively convert numpy/pandas types to native Python types."""
+            if isinstance(obj, dict):
+                return {k: make_json_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [make_json_serializable(item) for item in obj]
+            elif isinstance(obj, (bool, np.bool_)):
+                return bool(obj)
+            elif isinstance(obj, (int, np.integer)):
+                return int(obj)
+            elif isinstance(obj, (float, np.floating)):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif pd.isna(obj) if hasattr(pd, 'isna') else False:
+                return None
+            else:
+                return obj
+        
+        # Convert analysis to JSON-serializable format
+        analysis = make_json_serializable(analysis)
+        
+        return jsonify(analysis)
+    except Exception as e:
+        logger.error(f"Error getting diagnostic for {symbol}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/diagnostic/<symbol>')
+def diagnostic_page(symbol):
+    """Diagnostic page for a specific symbol."""
+    return render_template('diagnostic.html', symbol=symbol.upper())
 
 @app.route('/api/trade', methods=['POST'])
 def execute_trade():
@@ -367,6 +458,14 @@ def execute_trade():
         system = get_trading_system()
         client = system['client']
         
+        # If selling, check if we have a position to record trade
+        position_tracker = system.get('position_tracker')
+        position_data = None
+        if side == 'sell' and position_tracker:
+            # Check if we have this position tracked
+            positions = position_tracker.track_positions()
+            position_data = next((p for p in positions if p['symbol'].upper() == symbol.upper()), None)
+        
         # Place the order
         order = client.place_order(
             symbol=symbol,
@@ -378,6 +477,136 @@ def execute_trade():
         
         if not order:
             return jsonify({"error": "Order failed"}), 500
+        
+        # If sell order and we had a position, record the trade
+        if side == 'sell':
+            try:
+                # Wait a moment for order to fill, then get filled price
+                import time
+                time.sleep(0.5)  # Small delay to allow order to process
+                
+                # Get updated order status to check filled price
+                updated_order = None
+                try:
+                    orders = client.get_orders(status='all', limit=10)
+                    updated_order = next((o for o in orders if o.get('id') == order.get('id')), None)
+                except:
+                    pass
+                
+                # Get exit price from order or current quote
+                exit_price = 0
+                if updated_order and updated_order.get('filled_avg_price'):
+                    exit_price = updated_order.get('filled_avg_price')
+                elif order.get('filled_avg_price'):
+                    exit_price = order.get('filled_avg_price')
+                
+                if not exit_price:
+                    quote = client.get_stock_quote_info(symbol)
+                    exit_price = quote.get('price', 0) if quote else 0
+                
+                # Try to get position data from Alpaca directly if not in tracker
+                if not position_data:
+                    alpaca_position = client.get_position(symbol)
+                    if alpaca_position:
+                        # Check position tracker for entry info
+                        positions = position_tracker.track_positions() if position_tracker else []
+                        position_data = next((p for p in positions if p['symbol'].upper() == symbol.upper()), None)
+                        
+                        if not position_data and position_tracker:
+                            # Try to get from Alpaca position
+                            position_data = {
+                                'symbol': symbol.upper(),
+                                'qty': abs(float(alpaca_position.get('qty', qty))),
+                                'entry_price': float(alpaca_position.get('avg_entry_price', 0)),
+                                'avg_entry_price': float(alpaca_position.get('avg_entry_price', 0)),
+                                'entry_time': datetime.now() - timedelta(hours=1),  # Estimate if not available
+                                'current_price': exit_price
+                            }
+                
+                if exit_price > 0 and position_data:
+                    # Record trade via position tracker (which will record to analytics)
+                    entry_price = position_data.get('entry_price') or position_data.get('avg_entry_price', 0)
+                    if entry_price > 0:
+                        from datetime import datetime
+                        entry_time = position_data.get('entry_time')
+                        if isinstance(entry_time, str):
+                            entry_time = datetime.fromisoformat(entry_time)
+                        elif not entry_time:
+                            entry_time = datetime.now()
+                        
+                        exit_time = datetime.now()
+                        qty_float = float(position_data.get('qty', qty))
+                        pnl = (exit_price - entry_price) * qty_float
+                        pnl_percent = ((exit_price - entry_price) / entry_price) * 100 if entry_price > 0 else 0
+                        
+                        # Record to analytics if available
+                        analytics = system.get('performance_analytics')
+                        if analytics:
+                            analytics.record_trade(
+                                symbol=symbol,
+                                entry_price=entry_price,
+                                exit_price=exit_price,
+                                quantity=int(qty_float),
+                                entry_time=entry_time,
+                                exit_time=exit_time,
+                                pnl=pnl,
+                                pnl_percent=pnl_percent,
+                                exit_reason='manual'
+                            )
+                            logger.info(f"Recorded trade to analytics: {symbol} - P&L: ${pnl:.2f}")
+            except Exception as e:
+                logger.error(f"Error recording trade for manual exit: {e}", exc_info=True)
+        
+        # If buy order, track it for future trade recording
+        if side == 'buy':
+            try:
+                # Wait a moment for order to fill, then get filled price
+                import time
+                time.sleep(0.5)  # Small delay to allow order to process
+                
+                # Get updated order status to check filled price
+                updated_order = None
+                try:
+                    orders = client.get_orders(status='all', limit=10)
+                    updated_order = next((o for o in orders if o.get('id') == order.get('id')), None)
+                except:
+                    pass
+                
+                # Get entry price
+                entry_price = limit_price if limit_price else 0
+                
+                # If order is filled, get filled price
+                if updated_order and updated_order.get('filled_avg_price'):
+                    entry_price = updated_order.get('filled_avg_price')
+                elif order.get('filled_avg_price'):
+                    entry_price = order.get('filled_avg_price')
+                
+                if not entry_price:
+                    quote = client.get_stock_quote_info(symbol)
+                    entry_price = quote.get('price', 0) if quote else 0
+                
+                # Track this buy order in position tracker for future sell recording
+                if position_tracker and entry_price > 0:
+                    # Check if position already exists
+                    positions = position_tracker.track_positions()
+                    existing_pos = next((p for p in positions if p['symbol'].upper() == symbol.upper()), None)
+                    
+                    if not existing_pos:
+                        # Create new position entry
+                        from datetime import datetime
+                        position_tracker.positions[symbol.upper()] = {
+                            'symbol': symbol.upper(),
+                            'qty': qty,
+                            'entry_price': entry_price,
+                            'avg_entry_price': entry_price,
+                            'entry_time': datetime.now(),
+                            'stop_loss': None,
+                            'profit_target': None,
+                            'strategy': 'manual'
+                        }
+                        logger.info(f"Tracked new buy order: {symbol} @ ${entry_price:.4f} for future trade recording")
+            except Exception as e:
+                logger.error(f"Error tracking buy order: {e}", exc_info=True)
         
         # If buy order and scaling enabled, register position with scaling plan
         if side == 'buy' and use_scaling:
@@ -498,10 +727,40 @@ def switch_mode():
 def chart_daily_pnl():
     """Get daily P&L chart data."""
     try:
-        start_date = request.args.get('start_date')
-        end_date = request.args.get('end_date')
-        data = generate_daily_pnl_chart(start_date, end_date)
-        return jsonify(data)
+        system = get_trading_system()
+        analytics = system.get('performance_analytics')
+        
+        if analytics:
+            # Use new performance analytics
+            daily_stats = analytics.get_daily_stats(days=30)
+            
+            labels = [stat['date'] for stat in daily_stats]
+            profits = [stat['profit'] for stat in daily_stats]
+            losses = [abs(stat['loss']) for stat in daily_stats]
+            
+            return jsonify({
+                'labels': labels,
+                'datasets': [
+                    {
+                        'label': 'Profit',
+                        'data': profits,
+                        'borderColor': 'rgb(75, 192, 192)',
+                        'backgroundColor': 'rgba(75, 192, 192, 0.2)'
+                    },
+                    {
+                        'label': 'Loss',
+                        'data': losses,
+                        'borderColor': 'rgb(255, 99, 132)',
+                        'backgroundColor': 'rgba(255, 99, 132, 0.2)'
+                    }
+                ]
+            })
+        else:
+            # Fallback to old method
+            start_date = request.args.get('start_date')
+            end_date = request.args.get('end_date')
+            data = generate_daily_pnl_chart(start_date, end_date)
+            return jsonify(data)
     except Exception as e:
         logger.error(f"Error generating chart: {e}")
         return jsonify({"error": str(e)}), 500
@@ -510,10 +769,36 @@ def chart_daily_pnl():
 def chart_cumulative_pnl():
     """Get cumulative P&L chart data."""
     try:
-        start_date = request.args.get('start_date')
-        end_date = request.args.get('end_date')
-        data = generate_cumulative_pnl_chart(start_date, end_date)
-        return jsonify(data)
+        system = get_trading_system()
+        analytics = system.get('performance_analytics')
+        
+        if analytics:
+            # Use new performance analytics
+            daily_stats = analytics.get_daily_stats(days=30)
+            
+            labels = [stat['date'] for stat in daily_stats]
+            cumulative = []
+            running_total = 0
+            for stat in daily_stats:
+                running_total += stat['profit'] - stat['loss']
+                cumulative.append(running_total)
+            
+            return jsonify({
+                'labels': labels,
+                'datasets': [{
+                    'label': 'Cumulative P&L',
+                    'data': cumulative,
+                    'borderColor': 'rgb(75, 192, 192)',
+                    'backgroundColor': 'rgba(75, 192, 192, 0.2)',
+                    'tension': 0.1
+                }]
+            })
+        else:
+            # Fallback to old method
+            start_date = request.args.get('start_date')
+            end_date = request.args.get('end_date')
+            data = generate_cumulative_pnl_chart(start_date, end_date)
+            return jsonify(data)
     except Exception as e:
         logger.error(f"Error generating chart: {e}")
         return jsonify({"error": str(e)}), 500
@@ -522,8 +807,29 @@ def chart_cumulative_pnl():
 def chart_win_loss():
     """Get win/loss distribution chart data."""
     try:
-        data = generate_win_loss_distribution()
-        return jsonify(data)
+        system = get_trading_system()
+        analytics = system.get('performance_analytics')
+        
+        if analytics:
+            # Use new performance analytics
+            summary = analytics.get_summary()
+            winning = summary.get('winning_trades', 0)
+            losing = summary.get('losing_trades', 0)
+            
+            return jsonify({
+                'labels': ['Winning Trades', 'Losing Trades'],
+                'datasets': [{
+                    'data': [winning, losing],
+                    'backgroundColor': [
+                        'rgba(75, 192, 192, 0.6)',
+                        'rgba(255, 99, 132, 0.6)'
+                    ]
+                }]
+            })
+        else:
+            # Fallback to old method
+            data = generate_win_loss_distribution()
+            return jsonify(data)
     except Exception as e:
         logger.error(f"Error generating chart: {e}")
         return jsonify({"error": str(e)}), 500
@@ -532,8 +838,28 @@ def chart_win_loss():
 def chart_trade_frequency():
     """Get trade frequency chart data."""
     try:
-        data = generate_trade_frequency_chart()
-        return jsonify(data)
+        system = get_trading_system()
+        analytics = system.get('performance_analytics')
+        
+        if analytics:
+            # Use new performance analytics
+            daily_stats = analytics.get_daily_stats(days=30)
+            
+            labels = [stat['date'] for stat in daily_stats]
+            trades = [stat['trades'] for stat in daily_stats]
+            
+            return jsonify({
+                'labels': labels,
+                'datasets': [{
+                    'label': 'Trades per Day',
+                    'data': trades,
+                    'backgroundColor': 'rgba(54, 162, 235, 0.6)'
+                }]
+            })
+        else:
+            # Fallback to old method
+            data = generate_trade_frequency_chart()
+            return jsonify(data)
     except Exception as e:
         logger.error(f"Error generating chart: {e}")
         return jsonify({"error": str(e)}), 500
@@ -542,8 +868,22 @@ def chart_trade_frequency():
 def get_metrics():
     """Get performance metrics."""
     try:
-        metrics = generate_performance_metrics()
-        return jsonify(metrics)
+        system = get_trading_system()
+        analytics = system.get('performance_analytics')
+        
+        if analytics:
+            # Use new performance analytics
+            summary = analytics.get_summary()
+            return jsonify({
+                'net_pnl': summary.get('total_profit', 0) + summary.get('total_loss', 0),
+                'win_rate': summary.get('win_rate', 0) / 100.0,  # Convert from percentage
+                'avg_daily_pnl': summary.get('total_profit', 0) / max(1, summary.get('total_trades', 1)),
+                'total_trades': summary.get('total_trades', 0)
+            })
+        else:
+            # Fallback to old method
+            metrics = generate_performance_metrics()
+            return jsonify(metrics)
     except Exception as e:
         logger.error(f"Error getting metrics: {e}")
         return jsonify({"error": str(e)}), 500
@@ -1136,6 +1476,22 @@ def get_analytics_summary():
     except Exception as e:
         logger.error(f"Error getting analytics summary: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/analytics/trades')
+def get_analytics_trades():
+    """Get all completed trades from analytics."""
+    try:
+        system = get_trading_system()
+        analytics = system.get('performance_analytics')
+        
+        if not analytics:
+            return jsonify({"error": "Analytics not available", "trades": []}), 500
+        
+        trades = analytics.data.get("trades", [])
+        return jsonify({"trades": trades})
+    except Exception as e:
+        logger.error(f"Error getting trades: {e}")
+        return jsonify({"error": str(e), "trades": []}), 500
 
 @app.route('/api/analytics/symbol/<symbol>')
 def get_symbol_analytics(symbol):

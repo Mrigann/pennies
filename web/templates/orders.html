@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orders & Trades - Penny Trading System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">Penny Trading System</a>
+            <div class="navbar-nav flex-row">
+                <a class="nav-link me-3" href="/">Dashboard</a>
+                <a class="nav-link me-3" href="/trade">Trade</a>
+                <a class="nav-link me-3" href="/scanner">Scanner</a>
+                <a class="nav-link me-3" href="/positions">Positions</a>
+                <a class="nav-link me-3" href="/approvals">Approvals</a>
+                <a class="nav-link me-3" href="/analytics">Analytics</a>
+                <a class="nav-link active" href="/orders">Orders</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-3">
+        <div class="row mb-3">
+            <div class="col-md-12 d-flex justify-content-between align-items-center">
+                <h1>Orders & Trades History</h1>
+                <div>
+                    <button class="btn btn-primary btn-sm" onclick="refreshOrders()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mb-3">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header py-2">
+                        <h6 class="mb-0">Filters</h6>
+                    </div>
+                    <div class="card-body p-compact">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <label class="form-label">Status:</label>
+                                <select class="form-select form-select-sm" id="status-filter" onchange="applyFilters()">
+                                    <option value="all">All</option>
+                                    <option value="new">New</option>
+                                    <option value="accepted">Accepted</option>
+                                    <option value="pending_new">Pending New</option>
+                                    <option value="accepted_for_bidding">Accepted for Bidding</option>
+                                    <option value="stopped">Stopped</option>
+                                    <option value="rejected">Rejected</option>
+                                    <option value="canceled">Canceled</option>
+                                    <option value="expired">Expired</option>
+                                    <option value="pending_replace">Pending Replace</option>
+                                    <option value="pending_cancel">Pending Cancel</option>
+                                    <option value="filled">Filled</option>
+                                    <option value="partially_filled">Partially Filled</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Time:</label>
+                                <select class="form-select form-select-sm" id="time-filter" onchange="applyFilters()">
+                                    <option value="all">All Time</option>
+                                    <option value="today">Today</option>
+                                    <option value="1hour">Last 1 Hour</option>
+                                    <option value="24hours">Last 24 Hours</option>
+                                    <option value="1week">Last Week</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Side:</label>
+                                <select class="form-select form-select-sm" id="side-filter" onchange="applyFilters()">
+                                    <option value="all">All</option>
+                                    <option value="buy">Buy</option>
+                                    <option value="sell">Sell</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Sort By:</label>
+                                <select class="form-select form-select-sm" id="sort-by" onchange="applyFilters()">
+                                    <option value="time">Time (Newest)</option>
+                                    <option value="symbol">Symbol</option>
+                                    <option value="status">Status</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mb-3">
+            <div class="col-md-12">
+                <ul class="nav nav-tabs">
+                    <li class="nav-item">
+                        <a class="nav-link active" id="orders-tab" onclick="showTab('orders')">All Orders</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" id="trades-tab" onclick="showTab('trades')">Completed Trades</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-body p-compact">
+                        <div class="table-responsive">
+                            <table class="table table-striped table-sm mb-0" id="orders-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Symbol</th>
+                                        <th>Side</th>
+                                        <th>Qty</th>
+                                        <th>Order Type</th>
+                                        <th>Price</th>
+                                        <th>Filled Qty</th>
+                                        <th>Filled Price</th>
+                                        <th>Status</th>
+                                        <th>Order ID</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="orders-tbody">
+                                    <tr>
+                                        <td colspan="10" class="text-center">Loading orders...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-3" id="trades-section" style="display: none;">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header py-2">
+                        <h6 class="mb-0">Completed Trades (Analytics)</h6>
+                    </div>
+                    <div class="card-body p-compact">
+                        <div class="table-responsive">
+                            <table class="table table-striped table-sm mb-0" id="trades-table">
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th>Entry Time</th>
+                                        <th>Exit Time</th>
+                                        <th>Entry Price</th>
+                                        <th>Exit Price</th>
+                                        <th>Quantity</th>
+                                        <th>P&L</th>
+                                        <th>P&L %</th>
+                                        <th>Duration</th>
+                                        <th>Exit Reason</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="trades-tbody">
+                                    <tr>
+                                        <td colspan="10" class="text-center">Loading trades...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentTab = 'orders';
+        let allOrders = [];
+        let allTrades = [];
+
+        function showTab(tab) {
+            currentTab = tab;
+            document.getElementById('orders-tab').classList.remove('active');
+            document.getElementById('trades-tab').classList.remove('active');
+            document.getElementById('orders-section').style.display = 'none';
+            document.getElementById('trades-section').style.display = 'none';
+            
+            if (tab === 'orders') {
+                document.getElementById('orders-tab').classList.add('active');
+                document.getElementById('orders-section').style.display = 'block';
+                document.getElementById('trades-section').style.display = 'none';
+                loadOrders();
+            } else {
+                document.getElementById('trades-tab').classList.add('active');
+                document.getElementById('orders-section').style.display = 'none';
+                document.getElementById('trades-section').style.display = 'block';
+                loadTrades();
+            }
+        }
+
+        function refreshOrders() {
+            loadOrders();
+            loadTrades();
+        }
+
+        function loadOrders() {
+            const statusFilter = document.getElementById('status-filter').value;
+            const timeFilter = document.getElementById('time-filter').value;
+            const sideFilter = document.getElementById('side-filter').value;
+            const sortBy = document.getElementById('sort-by').value;
+
+            fetch(`/api/orders/recent?status=${statusFilter}&time=${timeFilter}&sort=${sortBy}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('orders-tbody').innerHTML = 
+                            `<tr><td colspan="10" class="text-center text-danger">Error: ${data.error}</td></tr>`;
+                        return;
+                    }
+
+                    allOrders = data.orders || [];
+                    let filtered = allOrders;
+
+                    // Apply side filter
+                    if (sideFilter !== 'all') {
+                        filtered = filtered.filter(o => o.side.toLowerCase() === sideFilter.toLowerCase());
+                    }
+
+                    displayOrders(filtered);
+                })
+                .catch(error => {
+                    console.error('Error loading orders:', error);
+                    document.getElementById('orders-tbody').innerHTML = 
+                        `<tr><td colspan="10" class="text-center text-danger">Error loading orders</td></tr>`;
+                });
+        }
+
+        function displayOrders(orders) {
+            const tbody = document.getElementById('orders-tbody');
+            
+            if (!orders || orders.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" class="text-center">No orders found</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = orders.map(order => {
+                const submittedAt = order.submitted_at ? new Date(order.submitted_at).toLocaleString() : 'N/A';
+                const statusClass = getStatusClass(order.status);
+                const sideClass = order.side.toLowerCase() === 'buy' ? 'text-success' : 'text-danger';
+                
+                return `
+                    <tr>
+                        <td>${submittedAt}</td>
+                        <td><strong>${order.symbol}</strong></td>
+                        <td class="${sideClass}"><strong>${order.side.toUpperCase()}</strong></td>
+                        <td>${order.qty}</td>
+                        <td>${order.order_type || 'N/A'}</td>
+                        <td>${order.limit_price ? '$' + order.limit_price.toFixed(4) : 'Market'}</td>
+                        <td>${order.filled_qty || 0}</td>
+                        <td>${order.filled_avg_price ? '$' + order.filled_avg_price.toFixed(4) : '-'}</td>
+                        <td><span class="badge bg-${statusClass}">${order.status}</span></td>
+                        <td><small>${order.id}</small></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function loadTrades() {
+            fetch('/api/analytics/summary')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('trades-tbody').innerHTML = 
+                            `<tr><td colspan="10" class="text-center text-danger">Error: ${data.error}</td></tr>`;
+                        return;
+                    }
+
+                    // Get trades from analytics
+                    fetch('/api/analytics/trades')
+                        .then(response => response.json())
+                        .then(tradesData => {
+                            if (tradesData.error) {
+                                document.getElementById('trades-tbody').innerHTML = 
+                                    `<tr><td colspan="10" class="text-center text-danger">Error: ${tradesData.error}</td></tr>`;
+                                return;
+                            }
+
+                            allTrades = tradesData.trades || [];
+                            displayTrades(allTrades);
+                        })
+                        .catch(error => {
+                            console.error('Error loading trades:', error);
+                            document.getElementById('trades-tbody').innerHTML = 
+                                `<tr><td colspan="10" class="text-center text-danger">Error loading trades</td></tr>`;
+                        });
+                })
+                .catch(error => {
+                    console.error('Error loading analytics:', error);
+                });
+        }
+
+        function displayTrades(trades) {
+            const tbody = document.getElementById('trades-tbody');
+            
+            if (!trades || trades.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" class="text-center">No completed trades found</td></tr>';
+                return;
+            }
+
+            // Sort by exit time (newest first)
+            trades.sort((a, b) => new Date(b.exit_time) - new Date(a.exit_time));
+
+            tbody.innerHTML = trades.map(trade => {
+                const entryTime = new Date(trade.entry_time).toLocaleString();
+                const exitTime = new Date(trade.exit_time).toLocaleString();
+                const duration = trade.duration_minutes ? 
+                    `${Math.floor(trade.duration_minutes)}m` : 
+                    'N/A';
+                const pnlClass = trade.pnl >= 0 ? 'text-success' : 'text-danger';
+                
+                return `
+                    <tr>
+                        <td><strong>${trade.symbol}</strong></td>
+                        <td>${entryTime}</td>
+                        <td>${exitTime}</td>
+                        <td>$${trade.entry_price.toFixed(4)}</td>
+                        <td>$${trade.exit_price.toFixed(4)}</td>
+                        <td>${trade.quantity}</td>
+                        <td class="${pnlClass}"><strong>$${trade.pnl.toFixed(2)}</strong></td>
+                        <td class="${pnlClass}">${trade.pnl_percent >= 0 ? '+' : ''}${trade.pnl_percent.toFixed(2)}%</td>
+                        <td>${duration}</td>
+                        <td><span class="badge bg-secondary">${trade.exit_reason || 'manual'}</span></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function getStatusClass(status) {
+            const statusLower = status.toLowerCase();
+            if (statusLower === 'filled') return 'success';
+            if (statusLower === 'partially_filled') return 'info';
+            if (statusLower === 'canceled' || statusLower === 'rejected' || statusLower === 'expired') return 'danger';
+            if (statusLower === 'pending_new' || statusLower === 'pending_replace' || statusLower === 'pending_cancel') return 'warning';
+            return 'secondary';
+        }
+
+        function applyFilters() {
+            if (currentTab === 'orders') {
+                loadOrders();
+            } else {
+                loadTrades();
+            }
+        }
+
+        // Load on page load
+        loadOrders();
+    </script>
+</body>
+</html>
+

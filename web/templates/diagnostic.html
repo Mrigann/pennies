@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diagnostic - {{ symbol }} - Penny Trading System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">Penny Trading System</a>
+            <div class="navbar-nav flex-row">
+                <a class="nav-link me-3" href="/">Dashboard</a>
+                <a class="nav-link me-3" href="/scanner">Scanner</a>
+                <a class="nav-link me-3" href="/trade">Trade</a>
+                <a class="nav-link me-3" href="/positions">Positions</a>
+                <a class="nav-link me-3" href="/analytics">Analytics</a>
+                <a class="nav-link" href="/orders">Orders</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <h1>Diagnostic Analysis: <strong id="symbol-display">{{ symbol }}</strong></h1>
+                <button class="btn btn-primary" onclick="loadDiagnostic()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+                <span class="ms-3" id="status"></span>
+            </div>
+        </div>
+
+        <!-- Status Card -->
+        <div class="row mb-4" id="status-card" style="display: none;">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h5>Analysis Status</h5>
+                        <div id="status-content"></div>
+                        <div id="data-warning" class="alert alert-warning mt-2" style="display: none;">
+                            <strong>⚠️ Data Subscription Required:</strong>
+                            <p class="mb-0">
+                                No historical data available for this symbol. This may require an Alpaca data subscription.
+                                <br>
+                                <small>
+                                    Alpaca provides free data for some symbols, but real-time and minute-level data may require a subscription.
+                                    <a href="https://alpaca.markets/data" target="_blank">Learn more about Alpaca data plans</a>
+                                </small>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Rejection Reasons -->
+        <div class="row mb-4" id="rejection-card" style="display: none;">
+            <div class="col-md-12">
+                <div class="card border-warning">
+                    <div class="card-header bg-warning">
+                        <h5 class="mb-0">Why This Symbol Was Rejected</h5>
+                    </div>
+                    <div class="card-body">
+                        <ul id="rejection-reasons" class="list-unstyled mb-0"></ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Key Metrics -->
+        <div class="row mb-4" id="metrics-row" style="display: none;">
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h6 class="text-muted">Current Price</h6>
+                        <h4 id="metric-price">$0.00</h4>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h6 class="text-muted">Volume Ratio</h6>
+                        <h4 id="metric-volume-ratio">0.00x</h4>
+                        <small id="volume-status" class="text-muted"></small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h6 class="text-muted">Volatility (ATR%)</h6>
+                        <h4 id="metric-volatility">0.00%</h4>
+                        <small id="volatility-status" class="text-muted"></small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h6 class="text-muted">Scalping Score</h6>
+                        <h4 id="metric-score">0.00</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Technical Indicators -->
+        <div class="row mb-4" id="indicators-row" style="display: none;">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Technical Indicators</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <div class="mb-3">
+                                    <strong>RSI (14):</strong>
+                                    <span id="ind-rsi" class="ms-2">-</span>
+                                    <div class="progress mt-1" style="height: 20px;">
+                                        <div id="rsi-bar" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                                    </div>
+                                    <small class="text-muted">Oversold: &lt;30, Overbought: &gt;70</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="mb-3">
+                                    <strong>MSI (14):</strong>
+                                    <span id="ind-msi" class="ms-2">-</span>
+                                    <div class="progress mt-1" style="height: 20px;">
+                                        <div id="msi-bar" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                                    </div>
+                                    <small class="text-muted">Money Flow Index (0-100)</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="mb-3">
+                                    <strong>MACD:</strong>
+                                    <span id="ind-macd" class="ms-2">-</span>
+                                </div>
+                                <div class="mb-3">
+                                    <strong>MACD Signal:</strong>
+                                    <span id="ind-macd-signal" class="ms-2">-</span>
+                                </div>
+                                <div class="mb-3">
+                                    <strong>MACD Histogram:</strong>
+                                    <span id="ind-macd-hist" class="ms-2">-</span>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="mb-3">
+                                    <strong>SMA 20:</strong>
+                                    <span id="ind-sma20" class="ms-2">-</span>
+                                </div>
+                                <div class="mb-3">
+                                    <strong>EMA 12:</strong>
+                                    <span id="ind-ema12" class="ms-2">-</span>
+                                </div>
+                                <div class="mb-3">
+                                    <strong>EMA 26:</strong>
+                                    <span id="ind-ema26" class="ms-2">-</span>
+                                </div>
+                                <div class="mb-3">
+                                    <strong>ATR:</strong>
+                                    <span id="ind-atr" class="ms-2">-</span>
+                                    <small class="text-muted d-block">(<span id="ind-atr-pct">-</span>% of price)</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="row mb-4" id="charts-row" style="display: none;">
+            <!-- Price Chart with Moving Averages -->
+            <div class="col-md-12 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Price Chart with Moving Averages</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="price-chart" height="100"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RSI Chart -->
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>RSI (Relative Strength Index)</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="rsi-chart" height="150"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MSI Chart -->
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>MSI (Money Flow Index)</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="msi-chart" height="150"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MACD Chart -->
+            <div class="col-md-12 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>MACD (Moving Average Convergence Divergence)</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="macd-chart" height="150"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Volume Chart -->
+            <div class="col-md-12 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Volume Analysis</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="volume-chart" height="150"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Criteria Check -->
+        <div class="row mb-4" id="criteria-row" style="display: none;">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Criteria Check</h5>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Criteria</th>
+                                    <th>Required</th>
+                                    <th>Actual</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="criteria-table">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const symbol = '{{ symbol }}';
+        let priceChart, rsiChart, msiChart, macdChart, volumeChart;
+
+        function loadDiagnostic() {
+            const statusEl = document.getElementById('status');
+            statusEl.innerHTML = '<span class="text-info">Loading...</span>';
+            
+            fetch(`/api/scanner/diagnostic/${symbol}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        statusEl.innerHTML = `<span class="text-danger">Error: ${data.error}</span>`;
+                        return;
+                    }
+                    
+                    displayDiagnostic(data);
+                    statusEl.innerHTML = '<span class="text-success">Loaded successfully</span>';
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    statusEl.innerHTML = `<span class="text-danger">Error loading diagnostic</span>`;
+                });
+        }
+
+        function displayDiagnostic(data) {
+            // Status
+            const statusCard = document.getElementById('status-card');
+            const statusContent = document.getElementById('status-content');
+            const dataWarning = document.getElementById('data-warning');
+            const status = data.status || 'unknown';
+            const statusClass = status === 'opportunity' ? 'success' : status === 'rejected' ? 'warning' : 'danger';
+            statusContent.innerHTML = `<span class="badge bg-${statusClass}">${status.toUpperCase()}</span>`;
+            statusCard.style.display = 'block';
+            
+            // Show data warning if no data available
+            if (!data.data_available && (!data.bars_data || !data.bars_data.sufficient)) {
+                dataWarning.style.display = 'block';
+            } else {
+                dataWarning.style.display = 'none';
+            }
+
+            // Rejection reasons
+            if (data.rejection_reasons && data.rejection_reasons.length > 0) {
+                const rejectionCard = document.getElementById('rejection-card');
+                const reasonsList = document.getElementById('rejection-reasons');
+                reasonsList.innerHTML = data.rejection_reasons.map(r => `<li class="text-warning"><i class="bi bi-x-circle"></i> ${r}</li>`).join('');
+                rejectionCard.style.display = 'block';
+            }
+
+            // Metrics
+            document.getElementById('metric-price').textContent = `$${(data.current_price || 0).toFixed(4)}`;
+            document.getElementById('metric-volume-ratio').textContent = `${(data.volume_ratio || 0).toFixed(2)}x`;
+            document.getElementById('metric-volatility').textContent = `${(data.volatility_score || 0).toFixed(2)}%`;
+            document.getElementById('metric-score').textContent = (data.scalping_score || 0).toFixed(2);
+            
+            const volumeStatus = document.getElementById('volume-status');
+            const volatilityStatus = document.getElementById('volatility-status');
+            const criteria = data.criteria || {};
+            
+            if (criteria.volume_passed) {
+                volumeStatus.textContent = '✓ Passed';
+                volumeStatus.className = 'text-success';
+            } else {
+                volumeStatus.textContent = `✗ Failed (Need: ${criteria.min_volume_multiplier || 0}x)`;
+                volumeStatus.className = 'text-danger';
+            }
+            
+            if (criteria.volatility_passed) {
+                volatilityStatus.textContent = '✓ Passed';
+                volatilityStatus.className = 'text-success';
+            } else {
+                volatilityStatus.textContent = `✗ Failed (Need: ${criteria.min_volatility_percent || 0}%)`;
+                volatilityStatus.className = 'text-danger';
+            }
+            
+            document.getElementById('metrics-row').style.display = 'flex';
+
+            // Indicators
+            const indicators = data.indicators || {};
+            if (indicators.rsi !== null && indicators.rsi !== undefined) {
+                document.getElementById('ind-rsi').textContent = indicators.rsi.toFixed(2);
+                const rsiBar = document.getElementById('rsi-bar');
+                rsiBar.style.width = `${indicators.rsi}%`;
+                rsiBar.className = indicators.rsi < 30 ? 'progress-bar bg-success' : 
+                                   indicators.rsi > 70 ? 'progress-bar bg-danger' : 
+                                   'progress-bar bg-warning';
+            }
+            
+            if (indicators.msi !== null && indicators.msi !== undefined) {
+                document.getElementById('ind-msi').textContent = indicators.msi.toFixed(2);
+                const msiBar = document.getElementById('msi-bar');
+                msiBar.style.width = `${indicators.msi}%`;
+                msiBar.className = 'progress-bar bg-info';
+            }
+            
+            document.getElementById('ind-macd').textContent = (indicators.macd || 0).toFixed(4);
+            document.getElementById('ind-macd-signal').textContent = (indicators.macd_signal || 0).toFixed(4);
+            document.getElementById('ind-macd-hist').textContent = (indicators.macd_hist || 0).toFixed(4);
+            document.getElementById('ind-sma20').textContent = indicators.sma_20 ? `$${indicators.sma_20.toFixed(4)}` : '-';
+            document.getElementById('ind-ema12').textContent = indicators.ema_12 ? `$${indicators.ema_12.toFixed(4)}` : '-';
+            document.getElementById('ind-ema26').textContent = indicators.ema_26 ? `$${indicators.ema_26.toFixed(4)}` : '-';
+            document.getElementById('ind-atr').textContent = indicators.atr ? `$${indicators.atr.toFixed(4)}` : '-';
+            document.getElementById('ind-atr-pct').textContent = indicators.atr_percent ? `${indicators.atr_percent.toFixed(2)}%` : '-';
+            
+            document.getElementById('indicators-row').style.display = 'block';
+
+            // Charts
+            if (data.chart_data && data.chart_data.prices) {
+                createCharts(data);
+            }
+
+            // Criteria table
+            const criteriaTable = document.getElementById('criteria-table');
+            criteriaTable.innerHTML = `
+                <tr>
+                    <td>Price in Range</td>
+                    <td>$${criteria.min_price || 0} - $${criteria.max_price || 0}</td>
+                    <td>$${(data.current_price || 0).toFixed(4)}</td>
+                    <td>${criteria.price_in_range ? '<span class="badge bg-success">Pass</span>' : '<span class="badge bg-danger">Fail</span>'}</td>
+                </tr>
+                <tr>
+                    <td>Volume Ratio</td>
+                    <td>&ge; ${criteria.min_volume_multiplier || 0}x</td>
+                    <td>${(data.volume_ratio || 0).toFixed(2)}x</td>
+                    <td>${criteria.volume_passed ? '<span class="badge bg-success">Pass</span>' : '<span class="badge bg-danger">Fail</span>'}</td>
+                </tr>
+                <tr>
+                    <td>Volatility (ATR%)</td>
+                    <td>&ge; ${criteria.min_volatility_percent || 0}%</td>
+                    <td>${(data.volatility_score || 0).toFixed(2)}%</td>
+                    <td>${criteria.volatility_passed ? '<span class="badge bg-success">Pass</span>' : '<span class="badge bg-danger">Fail</span>'}</td>
+                </tr>
+                <tr>
+                    <td>Data Sufficiency</td>
+                    <td>&ge; ${data.bars_data?.required || 0} bars</td>
+                    <td>${data.bars_data?.count || 0} bars</td>
+                    <td>${data.bars_data?.sufficient ? '<span class="badge bg-success">Pass</span>' : '<span class="badge bg-danger">Fail</span>'}</td>
+                </tr>
+            `;
+            document.getElementById('criteria-row').style.display = 'block';
+        }
+
+        function createCharts(data) {
+            const history = data.indicator_history || [];
+            const prices = data.chart_data?.prices || [];
+            
+            if (history.length === 0 && prices.length === 0) {
+                return;
+            }
+
+            const labels = history.map(h => {
+                const d = new Date(h.timestamp);
+                return d.toLocaleTimeString();
+            });
+
+            // Price Chart
+            const priceCtx = document.getElementById('price-chart').getContext('2d');
+            if (priceChart) priceChart.destroy();
+            priceChart = new Chart(priceCtx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Close Price',
+                        data: history.map(h => h.close),
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    }, {
+                        label: 'SMA 20',
+                        data: history.map(h => h.sma_20),
+                        borderColor: 'rgb(255, 99, 132)',
+                        tension: 0.1
+                    }, {
+                        label: 'EMA 12',
+                        data: history.map(h => h.ema_12),
+                        borderColor: 'rgb(54, 162, 235)',
+                        tension: 0.1
+                    }, {
+                        label: 'EMA 26',
+                        data: history.map(h => h.ema_26),
+                        borderColor: 'rgb(255, 206, 86)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    scales: {
+                        y: { beginAtZero: false }
+                    }
+                }
+            });
+
+            // RSI Chart
+            const rsiCtx = document.getElementById('rsi-chart').getContext('2d');
+            if (rsiChart) rsiChart.destroy();
+            rsiChart = new Chart(rsiCtx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'RSI',
+                        data: history.map(h => h.rsi),
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    scales: {
+                        y: { min: 0, max: 100 }
+                    },
+                    plugins: {
+                        annotation: {
+                            annotations: {
+                                line1: {
+                                    type: 'line',
+                                    yMin: 70,
+                                    yMax: 70,
+                                    borderColor: 'rgb(255, 99, 132)',
+                                    borderWidth: 2,
+                                    label: { content: 'Overbought (70)' }
+                                },
+                                line2: {
+                                    type: 'line',
+                                    yMin: 30,
+                                    yMax: 30,
+                                    borderColor: 'rgb(75, 192, 192)',
+                                    borderWidth: 2,
+                                    label: { content: 'Oversold (30)' }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // MSI Chart
+            const msiCtx = document.getElementById('msi-chart').getContext('2d');
+            if (msiChart) msiChart.destroy();
+            msiChart = new Chart(msiCtx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'MSI',
+                        data: history.map(h => h.msi),
+                        borderColor: 'rgb(153, 102, 255)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    scales: {
+                        y: { min: 0, max: 100 }
+                    }
+                }
+            });
+
+            // MACD Chart
+            const macdCtx = document.getElementById('macd-chart').getContext('2d');
+            if (macdChart) macdChart.destroy();
+            macdChart = new Chart(macdCtx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'MACD',
+                        data: history.map(h => h.macd),
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    }, {
+                        label: 'Signal',
+                        data: history.map(h => h.macd_signal),
+                        borderColor: 'rgb(255, 99, 132)',
+                        tension: 0.1
+                    }, {
+                        label: 'Histogram',
+                        data: history.map(h => h.macd_hist),
+                        type: 'bar',
+                        backgroundColor: 'rgba(255, 206, 86, 0.5)'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true
+                }
+            });
+
+            // Volume Chart
+            const volumeCtx = document.getElementById('volume-chart').getContext('2d');
+            if (volumeChart) volumeChart.destroy();
+            volumeChart = new Chart(volumeCtx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Volume',
+                        data: history.map(h => h.volume),
+                        backgroundColor: 'rgba(54, 162, 235, 0.5)'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true
+                }
+            });
+
+            document.getElementById('charts-row').style.display = 'block';
+        }
+
+        // Load on page load
+        window.onload = function() {
+            loadDiagnostic();
+        };
+    </script>
+</body>
+</html>
+

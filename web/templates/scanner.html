@@ -209,6 +209,9 @@
                         ${(opp.price_change_pct || 0) >= 0 ? '+' : ''}${(opp.price_change_pct || 0).toFixed(2)}%
                     </td>
                     <td>
+                        <button class="btn btn-sm btn-info" onclick="viewDiagnostic('${opp.symbol}')">
+                            <i class="bi bi-graph-up"></i> Diagnostic
+                        </button>
                         <button class="btn btn-sm btn-primary" onclick="viewDetails('${opp.symbol}')">
                             <i class="bi bi-eye"></i> View
                         </button>
@@ -244,9 +247,10 @@
                 if (status === 'opportunity') {
                     statusBadge = '<span class="badge bg-success">Opportunity</span>';
                     reason = `Score: ${(item.scalping_score || 0).toFixed(2)}`;
-                } else if (status === 'filtered') {
-                    statusBadge = '<span class="badge bg-warning">Filtered</span>';
-                    reason = item.reason || 'Did not meet criteria';
+                } else if (status === 'rejected') {
+                    statusBadge = '<span class="badge bg-warning">Rejected</span>';
+                    const reasons = item.rejection_reasons || [];
+                    reason = reasons.length > 0 ? reasons[0] : 'Did not meet criteria';
                 } else if (status === 'error') {
                     statusBadge = '<span class="badge bg-danger">Error</span>';
                     reason = item.error || 'Unknown error';
@@ -260,7 +264,10 @@
                         <td>${statusBadge}</td>
                         <td>${item.current_price ? '$' + parseFloat(item.current_price).toFixed(4) : '-'}</td>
                         <td>${item.scalping_score ? parseFloat(item.scalping_score).toFixed(2) : '-'}</td>
-                        <td class="text-muted small">${reason}</td>
+                        <td class="text-muted small">
+                            ${reason}
+                            ${item.symbol ? `<button class="btn btn-sm btn-link p-0 ms-2" onclick="viewDiagnostic('${item.symbol}')" title="View diagnostic">🔍</button>` : ''}
+                        </td>
                     </tr>
                 `;
             }).join('');
@@ -287,6 +294,10 @@
 
         function viewDetails(symbol) {
             window.location.href = `/trade?symbol=${symbol}`;
+        }
+
+        function viewDiagnostic(symbol) {
+            window.location.href = `/diagnostic/${symbol}`;
         }
 
         function addToWatchlist(symbol) {

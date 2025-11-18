@@ -17,7 +17,8 @@
                 <a class="nav-link me-3" href="/scanner">Scanner</a>
                 <a class="nav-link me-3" href="/positions">Positions</a>
                 <a class="nav-link me-3" href="/approvals">Approvals</a>
-                <a class="nav-link" href="/analytics">Analytics</a>
+                <a class="nav-link me-3 active" href="/analytics">Analytics</a>
+                <a class="nav-link" href="/orders">Orders</a>
             </div>
         </div>
     </nav>
@@ -120,7 +121,14 @@
             fetch('/api/charts/daily-pnl')
                 .then(response => response.json())
                 .then(data => {
+                    if (data.error) {
+                        console.error('Error loading daily P&L chart:', data.error);
+                        return;
+                    }
                     const ctx = document.getElementById('dailyPnlChart').getContext('2d');
+                    if (dailyPnlChart) {
+                        dailyPnlChart.destroy();
+                    }
                     dailyPnlChart = new Chart(ctx, {
                         type: 'line',
                         data: data,
@@ -131,13 +139,23 @@
                             }
                         }
                     });
+                })
+                .catch(error => {
+                    console.error('Error loading daily P&L chart:', error);
                 });
 
             // Cumulative P&L Chart
             fetch('/api/charts/cumulative-pnl')
                 .then(response => response.json())
                 .then(data => {
+                    if (data.error) {
+                        console.error('Error loading cumulative P&L chart:', data.error);
+                        return;
+                    }
                     const ctx = document.getElementById('cumulativePnlChart').getContext('2d');
+                    if (cumulativePnlChart) {
+                        cumulativePnlChart.destroy();
+                    }
                     cumulativePnlChart = new Chart(ctx, {
                         type: 'line',
                         data: data,
@@ -148,30 +166,50 @@
                             }
                         }
                     });
+                })
+                .catch(error => {
+                    console.error('Error loading cumulative P&L chart:', error);
                 });
 
             // Win/Loss Chart
             fetch('/api/charts/win-loss')
                 .then(response => response.json())
                 .then(data => {
+                    if (data.error) {
+                        console.error('Error loading win/loss chart:', data.error);
+                        return;
+                    }
                     const ctx = document.getElementById('winLossChart').getContext('2d');
+                    if (winLossChart) {
+                        winLossChart.destroy();
+                    }
                     winLossChart = new Chart(ctx, {
                         type: 'doughnut',
                         data: data,
                         options: {
                             responsive: true,
                             plugins: {
-                                title: { display: true, text: 'Winning vs Losing Days' }
+                                title: { display: true, text: 'Winning vs Losing Trades' }
                             }
                         }
                     });
+                })
+                .catch(error => {
+                    console.error('Error loading win/loss chart:', error);
                 });
 
             // Trade Frequency Chart
             fetch('/api/charts/trade-frequency')
                 .then(response => response.json())
                 .then(data => {
+                    if (data.error) {
+                        console.error('Error loading trade frequency chart:', data.error);
+                        return;
+                    }
                     const ctx = document.getElementById('tradeFrequencyChart').getContext('2d');
+                    if (tradeFrequencyChart) {
+                        tradeFrequencyChart.destroy();
+                    }
                     tradeFrequencyChart = new Chart(ctx, {
                         type: 'bar',
                         data: data,
@@ -182,16 +220,26 @@
                             }
                         }
                     });
+                })
+                .catch(error => {
+                    console.error('Error loading trade frequency chart:', error);
                 });
 
             // Load metrics
             fetch('/api/metrics')
                 .then(response => response.json())
                 .then(data => {
+                    if (data.error) {
+                        console.error('Error loading metrics:', data.error);
+                        return;
+                    }
                     document.getElementById('total-pnl').textContent = `$${data.net_pnl.toFixed(2)}`;
                     document.getElementById('win-rate').textContent = `${(data.win_rate * 100).toFixed(1)}%`;
                     document.getElementById('avg-daily').textContent = `$${data.avg_daily_pnl.toFixed(2)}`;
                     document.getElementById('total-trades').textContent = data.total_trades;
+                })
+                .catch(error => {
+                    console.error('Error loading metrics:', error);
                 });
         }
 
